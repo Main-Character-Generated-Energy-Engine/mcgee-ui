@@ -44,6 +44,7 @@ final class NarrationPolicy {
     this.sceneLookback = 2,
     this.maximumWords = 30,
     this.duplicateThreshold = 0.72,
+    this.rejectRepeatedNarration = true,
   }) : assert(maxNarrationsPerWindow > 0),
        assert(minimumSalience >= 0 && minimumSalience <= 1),
        assert(sceneLookback >= 0),
@@ -60,6 +61,7 @@ final class NarrationPolicy {
   final int sceneLookback;
   final int maximumWords;
   final double duplicateThreshold;
+  final bool rejectRepeatedNarration;
 
   SilenceReason? checkTiming(
     DateTime observedAt,
@@ -127,10 +129,12 @@ final class NarrationPolicy {
     if (_wordCount(text) > maximumWords) {
       return SilenceReason.narrationTooLong;
     }
-    final candidate = _tokens(text);
-    for (final entry in memory.recentNarrations) {
-      if (_jaccard(candidate, _tokens(entry.text)) >= duplicateThreshold) {
-        return SilenceReason.repeatedNarration;
+    if (rejectRepeatedNarration) {
+      final candidate = _tokens(text);
+      for (final entry in memory.recentNarrations) {
+        if (_jaccard(candidate, _tokens(entry.text)) >= duplicateThreshold) {
+          return SilenceReason.repeatedNarration;
+        }
       }
     }
     return null;

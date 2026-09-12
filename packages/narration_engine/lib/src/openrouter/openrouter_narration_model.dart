@@ -9,14 +9,20 @@ final class OpenRouterNarrationModel implements NarrationModel {
     required OpenAiApi client,
     this.model = 'openai/gpt-5.6-sol',
     this.requireSpokenLine = false,
+    this.continuous = false,
+    this.maximumWords = 24,
   }) : _delegate = OpenAiNarrationModel(
          client: client,
          model: model,
          requireSpokenLine: requireSpokenLine,
+         continuous: continuous,
+         maximumWords: maximumWords,
        );
 
   final String model;
   final bool requireSpokenLine;
+  final bool continuous;
+  final int maximumWords;
   final OpenAiNarrationModel _delegate;
 
   @override

@@ -28,5 +28,6 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   assets:
+    - binoculars-icon.svg
     - lib/assets/MCgEe.svg
     - lib/assets/switch.mp3

@@ -10,17 +10,24 @@ final class OpenAiNarrationModel implements NarrationModel {
     required this.client,
     this.model = 'gpt-4.1-mini',
     this.requireSpokenLine = false,
-  });
+    this.continuous = false,
+    this.maximumWords = 24,
+  }) : assert(maximumWords > 0);
 
   final OpenAiApi client;
   final String model;
   final bool requireSpokenLine;
+  final bool continuous;
+  final int maximumWords;
 
   @override
   Future<NarrationDraft> narrate(NarrationRequest request) async {
-    final milestoneInstruction = requireSpokenLine
-        ? 'This is a one-line offline demo: choose speak, not silence.'
+    final speakingInstruction = requireSpokenLine
+        ? 'Always choose speak, not silence.'
         : 'Silence is a successful choice when the moment does not earn a line.';
+    final formatInstruction = continuous
+        ? 'A spoken passage should contain 45 to $maximumWords words across two to four concise sentences, with no stage directions.'
+        : 'A spoken line must be one sentence of at most $maximumWords words, with no stage directions.';
     final response = await client.createResponse({
       'model': model,
       'max_output_tokens': 400,
@@ -28,13 +35,13 @@ final class OpenAiNarrationModel implements NarrationModel {
       'instructions':
           '''
 You are the final writer for a restrained, premium nature documentary about an
-ordinary person's day. $milestoneInstruction Write dry, precise observational
+ordinary person's day. $speakingInstruction Write dry, precise observational
 wit with affectionate dramatic distance. Stay grounded in the literal scene.
 Avoid stock nature-documentary language, generic grandeur, forced metaphors,
 and repetition. In particular, avoid "natural habitat", "majestic creature",
 "the specimen", "ancient ritual", and "little does it know". Do not force every
 action into a ritual, migration, hunt, or struggle. Understatement is welcome.
-A spoken line must be one sentence of at most 24 words, with no stage directions.
+$formatInstruction
 Return an empty text when choosing silence. Motifs are terse labels for comic
 devices used. Canon updates must be fictional continuity worth remembering
 later, and should usually be empty.

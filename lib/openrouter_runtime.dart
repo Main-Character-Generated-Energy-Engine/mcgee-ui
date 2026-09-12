@@ -31,10 +31,29 @@ final class OpenRouterNarrationRuntime {
       client: client,
       engine: NarrationEngine(
         sceneInterpreter: OpenRouterSceneInterpreter(client: client),
-        narrator: OpenRouterNarrationModel(client: client),
+        narrator: OpenRouterNarrationModel(
+          client: client,
+          requireSpokenLine: true,
+          continuous: true,
+          maximumWords: 70,
+        ),
         speechSynthesizer: speechSynthesizer,
         audioOutput: audioOutput,
+        promptBuilder: const ContinuousDocumentaryPromptBuilder(
+          maximumWords: 70,
+        ),
+        policy: const NarrationPolicy(
+          minimumGap: Duration.zero,
+          maximumObservationAge: null,
+          rollingWindow: Duration.zero,
+          maxNarrationsPerWindow: 1,
+          minimumSalience: 0,
+          sceneLookback: 0,
+          maximumWords: 70,
+          rejectRepeatedNarration: false,
+        ),
         maxCapturesPerObservation: 3,
+        prefetchDuringPlayback: true,
       ),
       speechSynthesizer: speechSynthesizer,
     );
@@ -45,6 +64,9 @@ final class OpenRouterNarrationRuntime {
   final _SelectableSpeechSynthesizer _speechSynthesizer;
   final List<CapturedImage> _recentCaptures = <CapturedImage>[];
   bool _closed = false;
+
+  Stream<NarrationEngineEvent> get events => _engine.events;
+  bool get isPlaying => _engine.isPlaying;
 
   Future<NarrationOutcome?> addCapture({
     required StoredCapture capture,
@@ -81,10 +103,7 @@ final class OpenRouterNarrationRuntime {
 }
 
 final class _SelectableSpeechSynthesizer implements SpeechSynthesizer {
-  _SelectableSpeechSynthesizer({
-    required this.client,
-    required this.voice,
-  });
+  _SelectableSpeechSynthesizer({required this.client, required this.voice});
 
   final OpenRouterHttpClient client;
   OpenRouterVoiceOption voice;

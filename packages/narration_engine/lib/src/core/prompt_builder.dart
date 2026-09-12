@@ -58,3 +58,48 @@ ${recentLines.isEmpty ? '(none)' : recentLines}
 Return a structured speak-or-silence decision.''';
   }
 }
+
+/// Prompt for a live narration stream whose passages should connect naturally.
+final class ContinuousDocumentaryPromptBuilder
+    implements NarrationPromptBuilder {
+  const ContinuousDocumentaryPromptBuilder({this.maximumWords = 70})
+    : assert(maximumWords > 0);
+
+  final int maximumWords;
+
+  @override
+  String build({
+    required SceneObservation observation,
+    required NarrativeMemorySnapshot memory,
+  }) {
+    final recentLines = memory.recentNarrations
+        .map((entry) => '- ${entry.text}')
+        .join('\n');
+    final canon = memory.canon.entries
+        .map((entry) => '- ${entry.key}: ${entry.value}')
+        .join('\n');
+    final details = observation.details.entries
+        .map((entry) => '- ${entry.key}: ${entry.value}')
+        .join('\n');
+
+    return '''You are providing continuous live nature-documentary narration about one ordinary human protagonist.
+Write the next connected passage in 45 to $maximumWords words. Use two to four concise sentences so the audio lasts long enough for the following passage to be prepared.
+Always speak. Even when little has changed, advance the commentary through precise visible detail, gentle anticipation, or continuity with the previous passage.
+Treat recent narration as the preceding part of one flowing track: continue from it without repeating its wording or restarting the premise.
+Stay grounded in visible behavior. Do not infer sensitive traits or facts that are not visible.
+
+Current observation:
+${observation.description}
+
+Visible scene details:
+${details.isEmpty ? '(none)' : details}
+
+Established canon:
+${canon.isEmpty ? '(none)' : canon}
+
+Immediately preceding narration:
+${recentLines.isEmpty ? '(This is the opening passage.)' : recentLines}
+
+Return a structured speak decision with the next passage.''';
+  }
+}

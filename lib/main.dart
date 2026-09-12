@@ -52,11 +52,13 @@ class CameraCapturePage extends StatefulWidget {
 }
 
 class _CameraCapturePageState extends State<CameraCapturePage>
-    with WidgetsBindingObserver, SingleTickerProviderStateMixin {
+    with WidgetsBindingObserver, TickerProviderStateMixin {
   CameraController? _controller;
   late final AnimationController _entryController;
+  late final AnimationController _binocularsController;
   late final Animation<double> _previewEntry;
   Timer? _captureTimer;
+  StreamSubscription<NarrationEngineEvent>? _narrationEventSubscription;
   CaptureStore? _captureStore;
   FlutterAudioOutput? _audioOutput;
   OpenRouterNarrationRuntime? _narrationRuntime;
@@ -68,6 +70,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
   bool _isAppActive = true;
   bool _isSelectingKey = false;
   bool _narrationUnavailable = false;
+  bool _isNarrationPlaying = false;
   String _selectedActor = 'Morgan Freeman';
   File? _switchSoundFile;
 
@@ -85,6 +88,10 @@ class _CameraCapturePageState extends State<CameraCapturePage>
       vsync: this,
       duration: const Duration(milliseconds: 1200),
     );
+    _binocularsController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1400),
+    )..repeat();
     _previewEntry = CurvedAnimation(
       parent: _entryController,
       curve: const Interval(0.18, 0.75, curve: Curves.easeOutCubic),
@@ -153,7 +160,10 @@ class _CameraCapturePageState extends State<CameraCapturePage>
     if (_isRecording) {
       _captureTimer?.cancel();
       unawaited(_narrationRuntime?.stop());
-      setState(() => _isRecording = false);
+      setState(() {
+        _isRecording = false;
+        _isNarrationPlaying = false;
+      });
       return;
     }
 
@@ -310,6 +320,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
 
       final previousRuntime = _narrationRuntime;
       final previousAudioOutput = _audioOutput;
+      final previousEventSubscription = _narrationEventSubscription;
       if (!mounted) {
         await runtime.close();
         await audioOutput.dispose();
@@ -319,7 +330,25 @@ class _CameraCapturePageState extends State<CameraCapturePage>
         _narrationRuntime = runtime;
         _audioOutput = audioOutput;
         _narrationUnavailable = false;
+        _isNarrationPlaying = false;
       });
+      _narrationEventSubscription = runtime.events.listen((event) {
+        if (!mounted || !identical(runtime, _narrationRuntime)) return;
+        final isPlaying = runtime.isPlaying;
+        final startedNarration = switch (event) {
+          NarrationStarted(:final text) => text,
+          _ => null,
+        };
+        if (_isNarrationPlaying != isPlaying || startedNarration != null) {
+          setState(() {
+            _isNarrationPlaying = isPlaying;
+            if (startedNarration != null) {
+              _lastNarration = startedNarration;
+            }
+          });
+        }
+      });
+      await previousEventSubscription?.cancel();
       await previousRuntime?.close();
       await previousAudioOutput?.dispose();
     } catch (_) {
@@ -405,6 +434,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
       if (mounted) {
         setState(() {
           _error = null;
+          _isNarrationPlaying = false;
         });
       }
       unawaited(controller?.dispose());
@@ -420,6 +450,8 @@ class _CameraCapturePageState extends State<CameraCapturePage>
     WidgetsBinding.instance.removeObserver(this);
     _captureTimer?.cancel();
     _entryController.dispose();
+    _binocularsController.dispose();
+    unawaited(_narrationEventSubscription?.cancel());
     _controller?.dispose();
     final narrationRuntime = _narrationRuntime;
     final audioOutput = _audioOutput;
@@ -559,6 +591,33 @@ class _CameraCapturePageState extends State<CameraCapturePage>
           if (!_isRecording)
             const Center(
               child: Icon(Icons.pause_rounded, color: Colors.white70, size: 72),
+            ),
+          if (_isRecording &&
+              _narrationRuntime != null &&
+              !_narrationUnavailable &&
+              !_isNarrationPlaying)
+            Positioned(
+              top: 18,
+              left: 18,
+              child: IgnorePointer(
+                child: Semantics(
+                  label: 'Preparing narration',
+                  child: RotationTransition(
+                    turns: _binocularsController,
+                    child: SizedBox(
+                      width: 46,
+                      height: 46,
+                      child: SvgPicture.asset(
+                        'binoculars-icon.svg',
+                        colorFilter: const ColorFilter.mode(
+                          Colors.white,
+                          BlendMode.srcIn,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
             ),
           if (_lastNarration case final narration?)
             Positioned(

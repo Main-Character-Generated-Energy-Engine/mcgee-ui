@@ -20,6 +20,7 @@ final class NarrationEngine {
     NarrativeMemory? memory,
     Clock? clock,
     this.maxCapturesPerObservation = 4,
+    this.prefetchDuringPlayback = false,
   }) : assert(maxCapturesPerObservation > 0),
        _sceneInterpreter = sceneInterpreter,
        _narrator = narrator,
@@ -40,17 +41,31 @@ final class NarrationEngine {
   final Clock _clock;
   final int maxCapturesPerObservation;
 
+  /// Allows one narration to be prepared while another is playing.
+  ///
+  /// Only the newest prepared narration is retained, so live narration cannot
+  /// build an increasingly stale playback queue.
+  final bool prefetchDuringPlayback;
+
   final StreamController<NarrationEngineEvent> _events =
       StreamController<NarrationEngineEvent>.broadcast(sync: true);
 
-  bool _busy = false;
+  int? _busyGeneration;
   bool _closed = false;
   int _generation = 0;
   DateTime? _lastPlaybackFinishedAt;
+  _QueuedNarration? _activeNarration;
+  _QueuedNarration? _pendingNarration;
+  bool _playbackLoopRunning = false;
+  bool _isPlayingAudio = false;
 
   Stream<NarrationEngineEvent> get events => _events.stream;
   NarrativeMemorySnapshot get memory => _memory.snapshot;
-  bool get isBusy => _busy;
+  bool get isBusy =>
+      _busyGeneration == _generation ||
+      _activeNarration != null ||
+      _pendingNarration != null;
+  bool get isPlaying => _isPlayingAudio;
 
   /// Processes the newest bounded window, dropping a submission if busy.
   ///
@@ -72,12 +87,14 @@ final class NarrationEngine {
     );
     final observedAt = window.last.capturedAt;
 
-    if (_busy) {
+    if (_busyGeneration == _generation ||
+        (!prefetchDuringPlayback &&
+            (_activeNarration != null || _pendingNarration != null))) {
       return _skip(window, observedAt, SilenceReason.busy.message);
     }
 
-    _busy = true;
     final operationGeneration = _generation;
+    _busyGeneration = operationGeneration;
     try {
       final now = _clock();
       final lastPlaybackFinishedAt = _lastPlaybackFinishedAt;
@@ -151,46 +168,19 @@ final class NarrationEngine {
       if (playbackStaleness != null) {
         return _skip(window, observedAt, playbackStaleness.message);
       }
-      final playback = await _audioOutput.play(track);
-      if (!_isCurrent(operationGeneration)) {
-        await _audioOutput.stop();
-        return _skip(window, observedAt, 'The engine was stopped.');
-      }
 
-      _memory.recordNarration(
-        text: text,
+      final queued = _QueuedNarration(
+        captures: window,
         observedAt: observedAt,
+        text: text,
         motifs: draft.motifs,
         canonUpdates: draft.canonUpdates,
+        track: track,
+        generation: operationGeneration,
       );
-      _emit(
-        NarrationStarted(
-          captures: window,
-          observedAt: observedAt,
-          playbackStartedAt: playback.startedAt,
-          text: text,
-        ),
-      );
-      await playback.completed;
-      if (!_isCurrent(operationGeneration)) {
-        return _skip(window, observedAt, 'The engine was stopped.');
-      }
-      final playbackFinishedAt = _clock();
-      _lastPlaybackFinishedAt = playbackFinishedAt;
-      _emit(
-        NarrationFinished(
-          captures: window,
-          observedAt: observedAt,
-          playbackStartedAt: playback.startedAt,
-          playbackFinishedAt: playbackFinishedAt,
-          text: text,
-        ),
-      );
-      return NarrationOutcome.spoken(
-        observedAt: observedAt,
-        playbackStartedAt: playback.startedAt,
-        text: text,
-      );
+      _enqueue(queued);
+      _releasePreparation(operationGeneration);
+      return await queued.completed.future;
     } catch (error) {
       if (!_isCurrent(operationGeneration)) {
         return _skip(window, observedAt, 'The engine was stopped.');
@@ -200,14 +190,151 @@ final class NarrationEngine {
       );
       return NarrationOutcome.failed(observedAt: observedAt, error: error);
     } finally {
-      _busy = false;
+      _releasePreparation(operationGeneration);
     }
+  }
+
+  void _releasePreparation(int operationGeneration) {
+    if (_busyGeneration == operationGeneration) {
+      _busyGeneration = null;
+    }
+  }
+
+  void _enqueue(_QueuedNarration narration) {
+    final replaced = _pendingNarration;
+    _pendingNarration = narration;
+    if (replaced != null) {
+      _completeSkipped(
+        replaced,
+        'A newer narration was ready before playback began.',
+      );
+    }
+    if (!_playbackLoopRunning) {
+      _playbackLoopRunning = true;
+      unawaited(_drainPlaybackQueue());
+    }
+  }
+
+  Future<void> _drainPlaybackQueue() async {
+    while (!_closed) {
+      final narration = _pendingNarration;
+      if (narration == null) break;
+      _pendingNarration = null;
+      _activeNarration = narration;
+
+      if (!_isCurrent(narration.generation)) {
+        _completeSkipped(narration, 'The engine was stopped.');
+        _activeNarration = null;
+        continue;
+      }
+
+      try {
+        final playback = await _audioOutput.play(narration.track);
+        if (!_isCurrent(narration.generation)) {
+          await _audioOutput.stop();
+          _isPlayingAudio = false;
+          _completeSkipped(narration, 'The engine was stopped.');
+          _activeNarration = null;
+          continue;
+        }
+
+        _isPlayingAudio = true;
+        _memory.recordNarration(
+          text: narration.text,
+          observedAt: narration.observedAt,
+          motifs: narration.motifs,
+          canonUpdates: narration.canonUpdates,
+        );
+        _emit(
+          NarrationStarted(
+            captures: narration.captures,
+            observedAt: narration.observedAt,
+            playbackStartedAt: playback.startedAt,
+            text: narration.text,
+          ),
+        );
+        await playback.completed;
+        _isPlayingAudio = false;
+        if (!_isCurrent(narration.generation)) {
+          _completeSkipped(narration, 'The engine was stopped.');
+          _activeNarration = null;
+          continue;
+        }
+
+        final playbackFinishedAt = _clock();
+        _lastPlaybackFinishedAt = playbackFinishedAt;
+        _emit(
+          NarrationFinished(
+            captures: narration.captures,
+            observedAt: narration.observedAt,
+            playbackStartedAt: playback.startedAt,
+            playbackFinishedAt: playbackFinishedAt,
+            text: narration.text,
+          ),
+        );
+        if (!narration.completed.isCompleted) {
+          narration.completed.complete(
+            NarrationOutcome.spoken(
+              observedAt: narration.observedAt,
+              playbackStartedAt: playback.startedAt,
+              text: narration.text,
+            ),
+          );
+        }
+      } catch (error) {
+        _isPlayingAudio = false;
+        if (_isCurrent(narration.generation)) {
+          _emit(
+            NarrationFailed(
+              captures: narration.captures,
+              observedAt: narration.observedAt,
+              error: error,
+            ),
+          );
+          if (!narration.completed.isCompleted) {
+            narration.completed.complete(
+              NarrationOutcome.failed(
+                observedAt: narration.observedAt,
+                error: error,
+              ),
+            );
+          }
+        } else {
+          _completeSkipped(narration, 'The engine was stopped.');
+        }
+      } finally {
+        _isPlayingAudio = false;
+        if (identical(_activeNarration, narration)) {
+          _activeNarration = null;
+        }
+      }
+    }
+
+    _playbackLoopRunning = false;
+    if (!_closed && _pendingNarration != null) {
+      _playbackLoopRunning = true;
+      unawaited(_drainPlaybackQueue());
+    }
+  }
+
+  void _completeSkipped(_QueuedNarration narration, String reason) {
+    if (narration.completed.isCompleted) return;
+    narration.completed.complete(
+      _skip(narration.captures, narration.observedAt, reason),
+    );
   }
 
   /// Invalidates in-flight work and stops active audio.
   Future<void> stop({bool clearMemory = false}) async {
     _generation += 1;
+    _busyGeneration = null;
+    final pending = _pendingNarration;
+    _pendingNarration = null;
+    if (pending != null) {
+      _completeSkipped(pending, 'The engine was stopped.');
+    }
     await _audioOutput.stop();
+    _isPlayingAudio = false;
     if (clearMemory) {
       _memory.clear();
       _lastPlaybackFinishedAt = null;
@@ -249,4 +376,25 @@ final class NarrationEngine {
       _events.add(event);
     }
   }
+}
+
+final class _QueuedNarration {
+  _QueuedNarration({
+    required this.captures,
+    required this.observedAt,
+    required this.text,
+    required this.motifs,
+    required this.canonUpdates,
+    required this.track,
+    required this.generation,
+  });
+
+  final List<CapturedImage> captures;
+  final DateTime observedAt;
+  final String text;
+  final List<String> motifs;
+  final Map<String, String> canonUpdates;
+  final AudioTrack track;
+  final int generation;
+  final Completer<NarrationOutcome> completed = Completer<NarrationOutcome>();
 }
