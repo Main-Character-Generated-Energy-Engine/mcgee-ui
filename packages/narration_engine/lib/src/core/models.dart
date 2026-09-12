@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 /// An image supplied by the host application.
@@ -176,10 +177,23 @@ final class AudioTrack {
 
 /// A playback handle returned once playback has actually started.
 final class AudioPlayback {
-  const AudioPlayback({required this.startedAt, required this.completed});
+  const AudioPlayback({
+    required this.startedAt,
+    required this.completed,
+    this.progress = const Stream<AudioPlaybackProgress>.empty(),
+  });
 
   final DateTime startedAt;
   final Future<void> completed;
+  final Stream<AudioPlaybackProgress> progress;
+}
+
+/// The current player position and its known total duration.
+final class AudioPlaybackProgress {
+  const AudioPlaybackProgress({required this.position, this.duration});
+
+  final Duration position;
+  final Duration? duration;
 }
 
 enum NarrationOutcomeKind { spoken, silent, failed }
@@ -257,6 +271,20 @@ final class NarrationStarted extends NarrationEngineEvent {
 
   final DateTime playbackStartedAt;
   final String text;
+}
+
+final class NarrationProgress extends NarrationEngineEvent {
+  const NarrationProgress({
+    required super.captures,
+    required super.observedAt,
+    required this.text,
+    required this.position,
+    required this.duration,
+  });
+
+  final String text;
+  final Duration position;
+  final Duration? duration;
 }
 
 final class NarrationFinished extends NarrationEngineEvent {

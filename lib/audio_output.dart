@@ -9,7 +9,11 @@ final class FlutterAudioOutput implements AudioOutput {
 
   final AudioPlayer _player;
   StreamSubscription<void>? _completionSubscription;
+  StreamSubscription<Duration>? _positionSubscription;
+  StreamSubscription<Duration>? _durationSubscription;
+  StreamController<AudioPlaybackProgress>? _activeProgressController;
   Completer<void>? _activeCompletion;
+  Duration? _activeDuration;
   bool _disposed = false;
 
   @override
@@ -18,15 +22,25 @@ final class FlutterAudioOutput implements AudioOutput {
       throw StateError('The audio output is disposed.');
     }
     await stop();
+    _ensureProgressListeners();
 
     final completion = Completer<void>();
+    final progressController =
+        StreamController<AudioPlaybackProgress>.broadcast(sync: true);
     _activeCompletion = completion;
+    _activeProgressController = progressController;
+    _activeDuration = track.duration;
     _completionSubscription = _player.onPlayerComplete.listen((_) {
       if (identical(_activeCompletion, completion)) {
         _activeCompletion = null;
         final subscription = _completionSubscription;
         _completionSubscription = null;
         unawaited(subscription?.cancel());
+        if (identical(_activeProgressController, progressController)) {
+          _activeProgressController = null;
+          _activeDuration = null;
+          unawaited(progressController.close());
+        }
       }
       if (!completion.isCompleted) completion.complete();
     });
@@ -41,6 +55,9 @@ final class FlutterAudioOutput implements AudioOutput {
       await _completionSubscription?.cancel();
       _completionSubscription = null;
       _activeCompletion = null;
+      _activeProgressController = null;
+      _activeDuration = null;
+      await progressController.close();
       if (!completion.isCompleted) completion.complete();
       rethrow;
     }
@@ -48,7 +65,21 @@ final class FlutterAudioOutput implements AudioOutput {
     return AudioPlayback(
       startedAt: DateTime.now(),
       completed: completion.future,
+      progress: progressController.stream,
     );
+  }
+
+  void _ensureProgressListeners() {
+    _durationSubscription ??= _player.onDurationChanged.listen((duration) {
+      _activeDuration = duration;
+    });
+    _positionSubscription ??= _player.onPositionChanged.listen((position) {
+      final controller = _activeProgressController;
+      if (controller == null || controller.isClosed) return;
+      controller.add(
+        AudioPlaybackProgress(position: position, duration: _activeDuration),
+      );
+    });
   }
 
   @override
@@ -57,8 +88,12 @@ final class FlutterAudioOutput implements AudioOutput {
     _activeCompletion = null;
     final subscription = _completionSubscription;
     _completionSubscription = null;
+    final progressController = _activeProgressController;
+    _activeProgressController = null;
+    _activeDuration = null;
     await _player.stop();
     await subscription?.cancel();
+    await progressController?.close();
     if (completion != null && !completion.isCompleted) completion.complete();
   }
 
@@ -66,6 +101,8 @@ final class FlutterAudioOutput implements AudioOutput {
     if (_disposed) return;
     await stop();
     _disposed = true;
+    await _positionSubscription?.cancel();
+    await _durationSubscription?.cancel();
     await _player.dispose();
   }
 }

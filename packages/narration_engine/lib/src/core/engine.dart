@@ -283,6 +283,7 @@ final class NarrationEngine {
         continue;
       }
 
+      StreamSubscription<AudioPlaybackProgress>? playbackProgressSubscription;
       try {
         final playback = await _audioOutput.play(narration.track);
         if (!_isCurrent(narration.generation)) {
@@ -294,6 +295,21 @@ final class NarrationEngine {
         }
 
         _isPlayingAudio = true;
+        playbackProgressSubscription = playback.progress.listen((progress) {
+          if (!_isCurrent(narration.generation) ||
+              !identical(_activeNarration, narration)) {
+            return;
+          }
+          _emit(
+            NarrationProgress(
+              captures: narration.captures,
+              observedAt: narration.observedAt,
+              text: narration.text,
+              position: progress.position,
+              duration: progress.duration,
+            ),
+          );
+        });
         _memory.recordNarration(
           text: narration.text,
           observedAt: narration.observedAt,
@@ -358,6 +374,7 @@ final class NarrationEngine {
           _completeSkipped(narration, 'The engine was stopped.');
         }
       } finally {
+        await playbackProgressSubscription?.cancel();
         _isPlayingAudio = false;
         if (identical(_activeNarration, narration)) {
           _activeNarration = null;

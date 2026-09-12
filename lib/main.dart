@@ -1,15 +1,12 @@
 import 'dart:async';
-import 'dart:io';
 
+import 'package:audioplayers/audioplayers.dart';
 import 'package:camera/camera.dart';
-import 'package:ffi/ffi.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:narration_engine/narration_engine.dart';
 import 'package:narration_engine/openrouter.dart';
-import 'package:win32/win32.dart';
 
 import 'audio_output.dart';
 import 'capture_store.dart';
@@ -63,7 +60,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
   FlutterAudioOutput? _audioOutput;
   OpenRouterNarrationRuntime? _narrationRuntime;
   String? _error;
-  String? _lastNarration;
+  String? _visibleNarrationPhrase;
   bool _isRecording = false;
   bool _isCapturing = false;
   bool _isInitializingCamera = false;
@@ -72,7 +69,8 @@ class _CameraCapturePageState extends State<CameraCapturePage>
   bool _narrationUnavailable = false;
   bool _isNarrationPlaying = false;
   String _selectedActor = 'Morgan Freeman';
-  File? _switchSoundFile;
+  AudioPlayer? _switchSoundPlayer;
+  Uint8List? _switchSoundBytes;
 
   static const _actors = <String, OpenRouterVoiceOption>{
     'Morgan Freeman': OpenRouterVoiceOption.morganFreeman,
@@ -190,36 +188,16 @@ class _CameraCapturePageState extends State<CameraCapturePage>
 
   Future<void> _playSwitchSound() async {
     try {
-      if (!Platform.isWindows) {
-        await SystemSound.play(SystemSoundType.click);
-        return;
-      }
-      _switchSoundFile ??= await _prepareSwitchSound();
-      const alias = 'mcgee_switch_sound';
-      _sendMci('close $alias');
-      final path = _switchSoundFile!.path.replaceAll('"', '');
-      _sendMci('open "$path" type mpegvideo alias $alias');
-      _sendMci('play $alias');
+      _switchSoundBytes ??= (await rootBundle.load(
+        'lib/assets/switch.mp3',
+      )).buffer.asUint8List();
+      final player = _switchSoundPlayer ??= AudioPlayer();
+      await player.stop();
+      await player.play(
+        BytesSource(_switchSoundBytes!, mimeType: 'audio/mpeg'),
+      );
     } catch (_) {
       // Audio feedback is optional; actor selection should still work.
-    }
-  }
-
-  Future<File> _prepareSwitchSound() async {
-    final bytes = (await rootBundle.load(
-      'lib/assets/switch.mp3',
-    )).buffer.asUint8List();
-    final file = File('${Directory.systemTemp.path}/mcgee_switch.mp3');
-    await file.writeAsBytes(bytes, flush: true);
-    return file;
-  }
-
-  void _sendMci(String command) {
-    final nativeCommand = command.toNativeUtf16();
-    try {
-      mciSendString(PCWSTR(nativeCommand), null, 0, null);
-    } finally {
-      calloc.free(nativeCommand);
     }
   }
 
@@ -276,9 +254,6 @@ class _CameraCapturePageState extends State<CameraCapturePage>
       }
       setState(() {
         _narrationUnavailable = outcome.kind == NarrationOutcomeKind.failed;
-        if (outcome.kind == NarrationOutcomeKind.spoken) {
-          _lastNarration = outcome.text;
-        }
       });
     } catch (_) {
       if (mounted && identical(runtime, _narrationRuntime)) {
@@ -336,15 +311,23 @@ class _CameraCapturePageState extends State<CameraCapturePage>
       _narrationEventSubscription = runtime.events.listen((event) {
         if (!mounted || !identical(runtime, _narrationRuntime)) return;
         final isPlaying = runtime.isPlaying;
-        final startedNarration = switch (event) {
-          NarrationStarted(:final text) => text,
+        final visiblePhrase = switch (event) {
+          NarrationStarted(:final text) => _estimatedSubtitlePhrase(
+            text,
+            Duration.zero,
+            null,
+          ),
+          NarrationProgress(:final text, :final position, :final duration) =>
+            _estimatedSubtitlePhrase(text, position, duration),
           _ => null,
         };
-        if (_isNarrationPlaying != isPlaying || startedNarration != null) {
+        if (_isNarrationPlaying != isPlaying ||
+            (visiblePhrase != null &&
+                visiblePhrase != _visibleNarrationPhrase)) {
           setState(() {
             _isNarrationPlaying = isPlaying;
-            if (startedNarration != null) {
-              _lastNarration = startedNarration;
+            if (visiblePhrase != null) {
+              _visibleNarrationPhrase = visiblePhrase;
             }
           });
         }
@@ -355,18 +338,28 @@ class _CameraCapturePageState extends State<CameraCapturePage>
       if (shouldSpeakStartupLine &&
           mounted &&
           identical(runtime, _narrationRuntime)) {
-        final outcome = await runtime.speakStartupLine();
-        if (mounted && identical(runtime, _narrationRuntime)) {
-          setState(
-            () => _narrationUnavailable =
-                outcome.kind == NarrationOutcomeKind.failed,
-          );
-        }
+        unawaited(_speakStartupLine(runtime));
       }
     } catch (_) {
       if (mounted) setState(() => _narrationUnavailable = true);
     } finally {
       if (mounted) setState(() => _isSelectingKey = false);
+    }
+  }
+
+  Future<void> _speakStartupLine(OpenRouterNarrationRuntime runtime) async {
+    try {
+      final outcome = await runtime.speakStartupLine();
+      if (mounted && identical(runtime, _narrationRuntime)) {
+        setState(
+          () => _narrationUnavailable =
+              outcome.kind == NarrationOutcomeKind.failed,
+        );
+      }
+    } catch (_) {
+      if (mounted && identical(runtime, _narrationRuntime)) {
+        setState(() => _narrationUnavailable = true);
+      }
     }
   }
 
@@ -434,9 +427,6 @@ class _CameraCapturePageState extends State<CameraCapturePage>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.windows) {
-      return;
-    }
     if (state == AppLifecycleState.inactive ||
         state == AppLifecycleState.paused) {
       _isAppActive = false;
@@ -464,16 +454,20 @@ class _CameraCapturePageState extends State<CameraCapturePage>
     _entryController.dispose();
     _binocularsController.dispose();
     unawaited(_narrationEventSubscription?.cancel());
+    unawaited(_switchSoundPlayer?.dispose());
     _controller?.dispose();
     final narrationRuntime = _narrationRuntime;
     final audioOutput = _audioOutput;
-    unawaited(
-      Future<void>(() async {
-        await narrationRuntime?.close();
-        await audioOutput?.dispose();
-      }),
-    );
+    unawaited(_disposeNarrationResources(narrationRuntime, audioOutput));
     super.dispose();
+  }
+
+  Future<void> _disposeNarrationResources(
+    OpenRouterNarrationRuntime? runtime,
+    FlutterAudioOutput? audioOutput,
+  ) async {
+    await runtime?.close();
+    await audioOutput?.dispose();
   }
 
   @override
@@ -502,6 +496,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
                   top: 12,
                   right: 12,
                   child: IconButton.filledTonal(
+                    key: const ValueKey('narrator-key-button'),
                     onPressed: _isSelectingKey
                         ? null
                         : () => _configureOpenRouterKey(tryDefaultFile: false),
@@ -627,7 +622,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
                 ),
               ),
             ),
-          if (_lastNarration case final narration?)
+          if (_visibleNarrationPhrase case final narration?)
             Positioned(
               left: 20,
               right: 20,
@@ -652,6 +647,63 @@ class _CameraCapturePageState extends State<CameraCapturePage>
         ],
       ),
     );
+  }
+
+  String _estimatedSubtitlePhrase(
+    String text,
+    Duration position,
+    Duration? duration,
+  ) {
+    final phrases = _splitSubtitlePhrases(text);
+    if (phrases.length == 1 || duration == null || duration <= Duration.zero) {
+      return phrases.first;
+    }
+
+    final totalWeight = phrases.fold<double>(
+      0,
+      (total, phrase) => total + _subtitlePhraseWeight(phrase),
+    );
+    final progress = (position.inMicroseconds / duration.inMicroseconds).clamp(
+      0.0,
+      1.0,
+    );
+    final targetWeight = totalWeight * progress;
+    var elapsedWeight = 0.0;
+    for (final phrase in phrases) {
+      elapsedWeight += _subtitlePhraseWeight(phrase);
+      if (targetWeight < elapsedWeight) return phrase;
+    }
+    return phrases.last;
+  }
+
+  List<String> _splitSubtitlePhrases(String text) {
+    final words = text.trim().split(RegExp(r'\s+'));
+    final phrases = <String>[];
+    var current = <String>[];
+    for (final word in words) {
+      current.add(word);
+      final endsClause = RegExp(r'[,.!?;:\u2013\u2014]$').hasMatch(word);
+      if (current.length >= 7 || (current.length >= 4 && endsClause)) {
+        phrases.add(current.join(' '));
+        current = <String>[];
+      }
+    }
+    if (current.isNotEmpty) {
+      if (current.length < 3 && phrases.isNotEmpty) {
+        phrases[phrases.length - 1] = '${phrases.last} ${current.join(' ')}';
+      } else {
+        phrases.add(current.join(' '));
+      }
+    }
+    return phrases.isEmpty ? <String>[text] : phrases;
+  }
+
+  double _subtitlePhraseWeight(String phrase) {
+    final spokenCharacters = phrase
+        .replaceAll(RegExp(r'[^A-Za-z0-9]'), '')
+        .length;
+    final pauses = RegExp(r'[,.!?;:\u2013\u2014]').allMatches(phrase).length;
+    return spokenCharacters + (pauses * 3.0);
   }
 
   Widget _buildTelevision(Widget screenContent) {

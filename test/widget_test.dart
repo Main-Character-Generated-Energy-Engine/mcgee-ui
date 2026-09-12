@@ -20,11 +20,15 @@ void main() {
     tester,
   ) async {
     await tester.pumpWidget(const MainApp());
-    for (var attempt = 0; attempt < 10; attempt++) {
+    await tester.pump();
+    for (var attempt = 0; attempt < 50; attempt++) {
+      final narratorButton = find.byKey(const ValueKey('narrator-key-button'));
+      final buttonIsEnabled =
+          narratorButton.evaluate().isNotEmpty &&
+          tester.widget<IconButton>(narratorButton).onPressed != null;
       final keyUiIsReady =
           find.text('Connect OpenRouter').evaluate().isNotEmpty ||
-          find.byTooltip('Change narrator key').evaluate().isNotEmpty ||
-          find.byTooltip('Connect narrator').evaluate().isNotEmpty;
+          buttonIsEnabled;
       if (keyUiIsReady) break;
       await tester.runAsync(
         () => Future<void>.delayed(const Duration(milliseconds: 50)),
@@ -33,11 +37,10 @@ void main() {
     }
 
     if (find.text('Connect OpenRouter').evaluate().isEmpty) {
-      final keyButton =
-          find.byTooltip('Change narrator key').evaluate().isNotEmpty
-          ? find.byTooltip('Change narrator key')
-          : find.byTooltip('Connect narrator');
-      await tester.tap(keyButton);
+      final narratorButton = tester.widget<IconButton>(
+        find.byKey(const ValueKey('narrator-key-button')),
+      );
+      narratorButton.onPressed!();
       await tester.pump(const Duration(milliseconds: 300));
     }
 
