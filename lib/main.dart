@@ -51,6 +51,9 @@ class _CameraCapturePageState extends State<CameraCapturePage>
   bool _isCapturing = false;
   bool _isInitializingCamera = false;
   bool _isAppActive = true;
+  String _selectedActor = 'Morgan Freeman';
+
+  static const _actors = ['Morgan Freeman', 'David Attenborough', 'Jade'];
 
   @override
   void initState() {
@@ -401,17 +404,60 @@ class _CameraCapturePageState extends State<CameraCapturePage>
     );
   }
 
+  Widget _buildActorSelector() {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final avatarSize = constraints.maxWidth < 150 ? 34.0 : 48.0;
+        const avatarIcons = [Icons.person, Icons.person, Icons.person];
+        return Row(
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            for (var index = 0; index < _actors.length; index++)
+              InkWell(
+                onTap: () => setState(() => _selectedActor = _actors[index]),
+                borderRadius: BorderRadius.circular(100),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 180),
+                  padding: const EdgeInsets.all(3),
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: _selectedActor == _actors[index]
+                          ? Colors.white
+                          : Colors.white30,
+                      width: _selectedActor == _actors[index] ? 3 : 1,
+                    ),
+                  ),
+                  child: CircleAvatar(
+                    radius: avatarSize / 2,
+                    backgroundColor: index == 0
+                        ? const Color(0xff6d7880)
+                        : index == 1
+                        ? const Color(0xff8b6d57)
+                        : const Color(0xff8c5570),
+                    child: Icon(
+                      avatarIcons[index],
+                      color: Colors.white,
+                      size: avatarSize * 0.62,
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+
   Widget _buildTvControls() {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final compact = constraints.maxWidth < 70;
-        final dialSize = compact ? constraints.maxWidth * 0.72 : 58.0;
+        final compact = constraints.maxWidth < 150;
         final buttonWidth = compact ? constraints.maxWidth * 0.22 : 18.0;
         return Column(
           children: [
-            _buildTvDial(0.75, dialSize),
-            SizedBox(height: compact ? 6 : 12),
-            _buildTvDial(-0.9, dialSize),
+            Expanded(flex: 3, child: _buildActorSelector()),
             SizedBox(height: compact ? 6 : 12),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
@@ -429,6 +475,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
             ),
             SizedBox(height: compact ? 7 : 14),
             Expanded(
+              flex: 5,
               child: Container(
                 margin: EdgeInsets.symmetric(horizontal: compact ? 2 : 6),
                 decoration: BoxDecoration(
@@ -465,48 +512,6 @@ class _CameraCapturePageState extends State<CameraCapturePage>
       },
     );
   }
-
-  Widget _buildTvDial(double angle, double size) {
-    return SizedBox(
-      width: size,
-      height: size,
-      child: CustomPaint(painter: _TvDialPainter(angle)),
-    );
-  }
-}
-
-class _TvDialPainter extends CustomPainter {
-  const _TvDialPainter(this.angle);
-
-  final double angle;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final center = Offset(size.width / 2, size.height / 2);
-    final outerPaint = Paint()
-      ..color = Colors.white
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2;
-    final innerPaint = Paint()
-      ..color = Colors.white
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1;
-    canvas.drawCircle(center, size.width * 0.47, outerPaint);
-    canvas.drawCircle(center, size.width * 0.36, innerPaint);
-    canvas.save();
-    canvas.translate(center.dx, center.dy);
-    canvas.rotate(angle);
-    canvas.drawLine(
-      Offset(0, -size.height * 0.27),
-      Offset(0, size.height * 0.27),
-      outerPaint,
-    );
-    canvas.restore();
-  }
-
-  @override
-  bool shouldRepaint(covariant _TvDialPainter oldDelegate) =>
-      oldDelegate.angle != angle;
 }
 
 class _TvTexturePainter extends CustomPainter {
