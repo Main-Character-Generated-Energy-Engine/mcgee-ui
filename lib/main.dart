@@ -251,37 +251,143 @@ class _CameraCapturePageState extends State<CameraCapturePage>
 
   Widget _buildPreview(CameraController? controller, bool isReady) {
     if (_error != null) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Text(
-            'Camera unavailable\n$_error',
-            textAlign: TextAlign.center,
+      return _buildTelevision(
+        Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Text(
+              'Camera unavailable\n$_error',
+              textAlign: TextAlign.center,
+            ),
           ),
         ),
       );
     }
     if (!isReady || controller == null) {
-      return const Center(child: CircularProgressIndicator());
+      return _buildTelevision(const Center(child: CircularProgressIndicator()));
     }
-    return Center(
-      child: AspectRatio(
-        aspectRatio: controller.value.aspectRatio,
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            CameraPreview(controller),
-            if (!_isRecording)
-              const Center(
-                child: Icon(
-                  Icons.pause_rounded,
-                  color: Colors.white70,
-                  size: 72,
+    return _buildTelevision(
+      Stack(
+        fit: StackFit.expand,
+        children: [
+          Center(
+            child: AspectRatio(
+              aspectRatio: controller.value.aspectRatio,
+              child: CameraPreview(controller),
+            ),
+          ),
+          IgnorePointer(child: CustomPaint(painter: _OldTvEffectPainter())),
+          if (!_isRecording)
+            const Center(
+              child: Icon(Icons.pause_rounded, color: Colors.white70, size: 72),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTelevision(Widget screenContent) {
+    return SizedBox.expand(
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: const Color(0xff594238),
+          border: Border.all(color: const Color(0xffc28b5e), width: 4),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(22),
+          child: Row(
+            children: [
+              Expanded(
+                flex: 8,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: const Color(0xff151b1a),
+                    borderRadius: BorderRadius.circular(26),
+                    border: Border.all(
+                      color: const Color(0xff211f1d),
+                      width: 10,
+                    ),
+                    boxShadow: const [
+                      BoxShadow(
+                        color: Colors.black87,
+                        blurRadius: 12,
+                        spreadRadius: 2,
+                      ),
+                    ],
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(16),
+                    child: screenContent,
+                  ),
                 ),
               ),
-          ],
+              const SizedBox(width: 22),
+              Expanded(flex: 2, child: _buildTvControls()),
+            ],
+          ),
         ),
       ),
     );
   }
+
+  Widget _buildTvControls() {
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Container(
+          width: 52,
+          height: 52,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: const Color(0xff8a5544),
+            border: Border.all(color: const Color(0xffd49b66), width: 4),
+          ),
+          child: const Icon(Icons.power_settings_new, color: Color(0xfff0d0a3)),
+        ),
+        const SizedBox(height: 28),
+        Expanded(
+          child: Container(
+            margin: const EdgeInsets.symmetric(horizontal: 6),
+            decoration: BoxDecoration(
+              color: const Color(0xff302a27),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: List.generate(
+                  7,
+                  (_) => Container(
+                    height: 2,
+                    width: double.infinity,
+                    margin: const EdgeInsets.symmetric(horizontal: 8),
+                    color: const Color(0xff8c6b57),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _OldTvEffectPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final scanlinePaint = Paint()
+      ..color = Colors.black.withValues(alpha: 0.16)
+      ..strokeWidth = 1;
+    for (double y = 0; y < size.height; y += 4) {
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), scanlinePaint);
+    }
+
+    final tintPaint = Paint()
+      ..color = const Color(0xffd6b27d).withValues(alpha: 0.04);
+    canvas.drawRect(Offset.zero & size, tintPaint);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
