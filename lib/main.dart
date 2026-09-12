@@ -2,8 +2,11 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:camera/camera.dart';
+import 'package:ffi/ffi.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:win32/win32.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -52,6 +55,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
   bool _isInitializingCamera = false;
   bool _isAppActive = true;
   String _selectedActor = 'Morgan Freeman';
+  File? _switchSoundFile;
 
   static const _actors = ['Morgan Freeman', 'David Attenborough', 'Jade'];
 
@@ -150,6 +154,46 @@ class _CameraCapturePageState extends State<CameraCapturePage>
       const Duration(seconds: 5),
       (_) => _capturePhoto(),
     );
+  }
+
+  void _selectActor(String actor) {
+    unawaited(_playSwitchSound());
+    setState(() => _selectedActor = actor);
+  }
+
+  Future<void> _playSwitchSound() async {
+    try {
+      if (!Platform.isWindows) {
+        await SystemSound.play(SystemSoundType.click);
+        return;
+      }
+      _switchSoundFile ??= await _prepareSwitchSound();
+      const alias = 'mcgee_switch_sound';
+      _sendMci('close $alias');
+      final path = _switchSoundFile!.path.replaceAll('"', '');
+      _sendMci('open "$path" type mpegvideo alias $alias');
+      _sendMci('play $alias');
+    } catch (_) {
+      // Audio feedback is optional; actor selection should still work.
+    }
+  }
+
+  Future<File> _prepareSwitchSound() async {
+    final bytes = (await rootBundle.load(
+      'lib/assets/switch.mp3',
+    )).buffer.asUint8List();
+    final file = File('${Directory.systemTemp.path}/mcgee_switch.mp3');
+    await file.writeAsBytes(bytes, flush: true);
+    return file;
+  }
+
+  void _sendMci(String command) {
+    final nativeCommand = command.toNativeUtf16();
+    try {
+      mciSendString(PCWSTR(nativeCommand), null, 0, null);
+    } finally {
+      calloc.free(nativeCommand);
+    }
   }
 
   Future<void> _capturePhoto() async {
@@ -415,7 +459,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
           children: [
             for (var index = 0; index < _actors.length; index++)
               InkWell(
-                onTap: () => setState(() => _selectedActor = _actors[index]),
+                onTap: () => _selectActor(_actors[index]),
                 borderRadius: BorderRadius.circular(100),
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 180),
@@ -479,28 +523,59 @@ class _CameraCapturePageState extends State<CameraCapturePage>
               child: Container(
                 margin: EdgeInsets.symmetric(horizontal: compact ? 2 : 6),
                 decoration: BoxDecoration(
-                  color: Colors.black,
+                  gradient: const LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      Color(0xff202020),
+                      Colors.black,
+                      Color(0xff111111),
+                    ],
+                  ),
                   border: Border.all(
                     color: Colors.white,
                     width: compact ? 2 : 3,
                   ),
                   borderRadius: BorderRadius.circular(100),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Colors.black87,
+                      blurRadius: 8,
+                      spreadRadius: 2,
+                    ),
+                    BoxShadow(
+                      color: Colors.white12,
+                      blurRadius: 2,
+                      spreadRadius: 1,
+                    ),
+                  ],
                 ),
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(100),
-                  child: Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                      children: List.generate(
-                        compact ? 7 : 11,
-                        (_) => Container(
-                          height: compact ? 1 : 2,
-                          width: double.infinity,
-                          margin: EdgeInsets.symmetric(
-                            horizontal: compact ? 3 : 7,
-                          ),
-                          color: Colors.white,
-                        ),
+                  child: CustomPaint(
+                    painter: _SpeakerTexturePainter(),
+                    child: Padding(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: compact ? 5 : 10,
+                        vertical: compact ? 10 : 16,
+                      ),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                        children: List.generate(compact ? 7 : 11, (index) {
+                          final isEndLine =
+                              index == 0 || index == (compact ? 6 : 10);
+                          return FractionallySizedBox(
+                            widthFactor: isEndLine ? 0.6 : 1,
+                            child: Container(
+                              height: compact ? 1 : 2,
+                              width: double.infinity,
+                              margin: EdgeInsets.symmetric(
+                                horizontal: compact ? 3 : 7,
+                              ),
+                              color: Colors.white,
+                            ),
+                          );
+                        }),
                       ),
                     ),
                   ),
@@ -512,6 +587,42 @@ class _CameraCapturePageState extends State<CameraCapturePage>
       },
     );
   }
+}
+
+class _SpeakerTexturePainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final innerRim = Paint()
+      ..color = Colors.white.withValues(alpha: 0.14)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1;
+    final innerShadow = Paint()
+      ..color = Colors.black.withValues(alpha: 0.42)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2;
+    final rimRect = RRect.fromRectAndRadius(
+      Rect.fromLTWH(5, 5, size.width - 10, size.height - 10),
+      Radius.circular(size.width * 0.42),
+    );
+    canvas.drawRRect(rimRect, innerShadow);
+    canvas.drawRRect(rimRect.deflate(3), innerRim);
+
+    final ribPaint = Paint()
+      ..color = Colors.white.withValues(alpha: 0.035)
+      ..strokeWidth = 1;
+    final shadowPaint = Paint()
+      ..color = Colors.black.withValues(alpha: 0.2)
+      ..strokeWidth = 2;
+    for (double x = 5; x < size.width; x += 7) {
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height), ribPaint);
+    }
+    for (double x = 8; x < size.width; x += 28) {
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height), shadowPaint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
 class _TvTexturePainter extends CustomPainter {
