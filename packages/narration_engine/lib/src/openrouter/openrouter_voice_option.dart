@@ -23,7 +23,7 @@ final class OpenRouterVoiceOption {
   static const morganFreeman = OpenRouterVoiceOption(
     name: 'morgan-freeman',
     model: 'fish-audio/s2.1-pro',
-    voiceId: 'bb742915b1fa41b389a850b11efae0c8',
+    voiceId: '3ad4d432023c47ee9e6c7805b973630a',
   );
 
   static const jade = OpenRouterVoiceOption(

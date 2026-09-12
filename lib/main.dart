@@ -3,7 +3,6 @@ import 'dart:io';
 
 import 'package:camera/camera.dart';
 import 'package:ffi/ffi.dart';
-import 'package:file_selector/file_selector.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -14,6 +13,7 @@ import 'package:win32/win32.dart';
 
 import 'audio_output.dart';
 import 'capture_store.dart';
+import 'openrouter_key_loader.dart';
 import 'openrouter_runtime.dart';
 
 void main() {
@@ -91,6 +91,9 @@ class _CameraCapturePageState extends State<CameraCapturePage>
     );
     _entryController.forward();
     _initializeCamera();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(_configureOpenRouterKey(tryDefaultFile: true));
+    });
   }
 
   Future<void> _initializeCamera() async {
@@ -274,16 +277,24 @@ class _CameraCapturePageState extends State<CameraCapturePage>
     }
   }
 
-  Future<void> _selectOpenRouterKey() async {
+  Future<void> _configureOpenRouterKey({required bool tryDefaultFile}) async {
     if (_isSelectingKey) return;
     setState(() => _isSelectingKey = true);
     try {
-      const keyFileType = XTypeGroup(label: 'OpenRouter key file');
-      final keyFile = await openFile(
-        acceptedTypeGroups: const <XTypeGroup>[keyFileType],
-      );
-      if (keyFile == null) return;
-      final key = (await keyFile.readAsString()).trim();
+      String? key;
+      String? fallbackMessage;
+      if (tryDefaultFile) {
+        try {
+          key = await loadDefaultOpenRouterKey();
+        } catch (_) {
+          fallbackMessage =
+              'The key in .secrets/openrouter-key could not be used.';
+        }
+      }
+      if (!mounted) return;
+      key ??= await _showOpenRouterKeyDialog(message: fallbackMessage);
+      if (key == null || !mounted) return;
+
       final audioOutput = FlutterAudioOutput();
       late final OpenRouterNarrationRuntime runtime;
       try {
@@ -316,6 +327,68 @@ class _CameraCapturePageState extends State<CameraCapturePage>
     } finally {
       if (mounted) setState(() => _isSelectingKey = false);
     }
+  }
+
+  Future<String?> _showOpenRouterKeyDialog({String? message}) async {
+    final formKey = GlobalKey<FormState>();
+    var key = '';
+    return showDialog<String>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Connect OpenRouter'),
+          content: Form(
+            key: formKey,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (message != null) ...[
+                  Text(message),
+                  const SizedBox(height: 12),
+                ],
+                TextFormField(
+                  autofocus: true,
+                  obscureText: true,
+                  autocorrect: false,
+                  enableSuggestions: false,
+                  keyboardType: TextInputType.visiblePassword,
+                  onChanged: (value) => key = value,
+                  decoration: const InputDecoration(
+                    labelText: 'OpenRouter API key',
+                    hintText: 'Paste your OpenRouter key here',
+                  ),
+                  validator: (value) {
+                    final key = value?.trim() ?? '';
+                    if (key.isEmpty) return 'Paste your OpenRouter key.';
+                    if (key.contains(RegExp(r'\s'))) {
+                      return 'The key cannot contain whitespace.';
+                    }
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 12),
+                const Text('The key is kept in memory only and is not stored.'),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                if (formKey.currentState?.validate() ?? false) {
+                  Navigator.pop(dialogContext, key.trim());
+                }
+              },
+              child: const Text('Connect'),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   @override
@@ -385,7 +458,9 @@ class _CameraCapturePageState extends State<CameraCapturePage>
                   top: 12,
                   right: 12,
                   child: FilledButton.tonalIcon(
-                    onPressed: _isSelectingKey ? null : _selectOpenRouterKey,
+                    onPressed: _isSelectingKey
+                        ? null
+                        : () => _configureOpenRouterKey(tryDefaultFile: false),
                     icon: Icon(
                       _narrationRuntime == null
                           ? Icons.key_rounded
@@ -395,9 +470,9 @@ class _CameraCapturePageState extends State<CameraCapturePage>
                     ),
                     label: Text(
                       _isSelectingKey
-                          ? 'Loading…'
+                          ? 'Connecting…'
                           : _narrationRuntime == null
-                          ? 'Select key'
+                          ? 'Enter key'
                           : 'Narrator ready',
                     ),
                   ),

@@ -44,7 +44,7 @@ void main() {
       expect(api.responseBodies[1]['max_output_tokens'], 400);
       expect(api.speechBodies.single, {
         'model': 'fish-audio/s2.1-pro',
-        'voice': 'bb742915b1fa41b389a850b11efae0c8',
+        'voice': '3ad4d432023c47ee9e6c7805b973630a',
         'input': 'The campaign advances by inches.',
         'response_format': 'mp3',
       });
@@ -73,7 +73,7 @@ void main() {
       'x-ai/grok-voice-tts-1.0',
     ]);
     expect(api.speechBodies.map((body) => body['voice']), [
-      'bb742915b1fa41b389a850b11efae0c8',
+      '3ad4d432023c47ee9e6c7805b973630a',
       'c39a76f685cf4f8fb41cd5d3d66b497d',
       'eve',
     ]);

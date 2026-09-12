@@ -12,10 +12,12 @@ flutter pub get
 flutter run -d chrome
 ```
 
-Allow camera access, then click **Select key** and choose the local
-`.secrets/openrouter-key` file. The app reads the key into memory for the current
-page only. It does not print it, store it in browser storage, package it as an
-asset, or compile it into the web bundle.
+Allow camera access when prompted. IO builds first try
+`.secrets/openrouter-key`. Browsers cannot silently read host filesystem paths,
+so the web app instead opens a text dialog where you can paste the key. The app
+keeps the key in memory for the current page only. It does not print it, store
+it in browser storage, package it as an asset, or compile it into the web
+bundle.
 
 The browser samples one JPEG every five seconds. After three new frames, it
 submits the rolling window to the engine. The engine may speak or deliberately
@@ -40,7 +42,7 @@ Use localhost or HTTPS: browser camera access requires a secure context.
 - `lib/audio_output.dart`: `audioplayers` implementation of `AudioOutput`.
 - `lib/capture_store*.dart`: bytes in the browser; timestamped files on IO
   platforms.
-- `lib/main.dart`: camera lifecycle, five-second sampling, key selection, and
+- `lib/main.dart`: camera lifecycle, five-second sampling, key entry, and
   host UI only.
 
 The host should keep one engine for a session so narrative memory, fictional
