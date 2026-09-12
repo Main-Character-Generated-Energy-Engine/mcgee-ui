@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -286,6 +287,23 @@ class _CameraCapturePageState extends State<CameraCapturePage>
             },
           ),
           IgnorePointer(child: CustomPaint(painter: _OldTvEffectPainter())),
+          Positioned(
+            right: 18,
+            bottom: 6,
+            child: IgnorePointer(
+              child: Opacity(
+                opacity: 0.72,
+                child: SizedBox(
+                  width: 140,
+                  height: 140,
+                  child: SvgPicture.asset(
+                    'lib/assets/MCgEe.svg',
+                    fit: BoxFit.contain,
+                  ),
+                ),
+              ),
+            ),
+          ),
           if (!_isRecording)
             const Center(
               child: Icon(Icons.pause_rounded, color: Colors.white70, size: 72),
@@ -304,55 +322,77 @@ class _CameraCapturePageState extends State<CameraCapturePage>
           final controlGap = compact ? 6.0 : 10.0;
           return DecoratedBox(
             decoration: BoxDecoration(
-              color: Colors.black,
+              gradient: const LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  Color(0xff242424),
+                  Color(0xff050505),
+                  Color(0xff171717),
+                ],
+              ),
               border: Border.all(color: Colors.white, width: compact ? 3 : 5),
               borderRadius: BorderRadius.circular(compact ? 10 : 18),
             ),
-            child: Padding(
-              padding: EdgeInsets.all(framePadding),
-              child: Row(
-                children: [
-                  Expanded(
-                    flex: 8,
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        color: Colors.black,
-                        borderRadius: BorderRadius.circular(compact ? 10 : 18),
-                        border: Border.all(
-                          color: Colors.white,
-                          width: compact ? 4 : 6,
-                        ),
-                      ),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(compact ? 6 : 12),
-                        child: screenContent,
-                      ),
-                    ),
-                  ),
-                  SizedBox(width: controlGap),
-                  Expanded(
-                    flex: 2,
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        border: Border(
-                          left: BorderSide(
+            child: CustomPaint(
+              painter: _TvTexturePainter(),
+              child: Padding(
+                padding: EdgeInsets.all(framePadding),
+                child: Row(
+                  children: [
+                    Expanded(
+                      flex: 8,
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: Colors.black,
+                          borderRadius: BorderRadius.circular(
+                            compact ? 10 : 18,
+                          ),
+                          border: Border.all(
                             color: Colors.white,
-                            width: compact ? 2 : 4,
+                            width: compact ? 4 : 6,
                           ),
                         ),
-                      ),
-                      child: Padding(
-                        padding: EdgeInsets.fromLTRB(
-                          compact ? 5 : 10,
-                          compact ? 5 : 10,
-                          compact ? 2 : 4,
-                          compact ? 5 : 10,
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(compact ? 6 : 12),
+                          child: screenContent,
                         ),
-                        child: _buildTvControls(),
                       ),
                     ),
-                  ),
-                ],
+                    SizedBox(width: controlGap),
+                    Expanded(
+                      flex: 2,
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                            colors: [
+                              Color(0xff202020),
+                              Colors.black,
+                              Color(0xff101010),
+                            ],
+                          ),
+                          border: Border(
+                            left: BorderSide(
+                              color: Colors.white,
+                              width: compact ? 2 : 4,
+                            ),
+                          ),
+                        ),
+                        child: Padding(
+                          padding: EdgeInsets.fromLTRB(
+                            compact ? 5 : 10,
+                            compact ? 5 : 10,
+                            compact ? 2 : 4,
+                            compact ? 5 : 10,
+                          ),
+                          child: _buildTvControls(),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           );
@@ -467,6 +507,32 @@ class _TvDialPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _TvDialPainter oldDelegate) =>
       oldDelegate.angle != angle;
+}
+
+class _TvTexturePainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final diagonalPaint = Paint()
+      ..color = Colors.white.withValues(alpha: 0.055)
+      ..strokeWidth = 1;
+    for (double x = -size.height; x < size.width; x += 9) {
+      canvas.drawLine(
+        Offset(x, 0),
+        Offset(x + size.height, size.height),
+        diagonalPaint,
+      );
+    }
+
+    final speckPaint = Paint()..color = Colors.white.withValues(alpha: 0.075);
+    for (double y = 6; y < size.height; y += 18) {
+      for (double x = 5; x < size.width; x += 21) {
+        canvas.drawCircle(Offset(x, y), 0.8, speckPaint);
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
 class _OldTvEffectPainter extends CustomPainter {
