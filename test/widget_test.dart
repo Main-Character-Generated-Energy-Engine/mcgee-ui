@@ -23,8 +23,8 @@ void main() {
     for (var attempt = 0; attempt < 10; attempt++) {
       final keyUiIsReady =
           find.text('Connect OpenRouter').evaluate().isNotEmpty ||
-          find.text('Narrator ready').evaluate().isNotEmpty ||
-          find.text('Enter key').evaluate().isNotEmpty;
+          find.byTooltip('Change narrator key').evaluate().isNotEmpty ||
+          find.byTooltip('Connect narrator').evaluate().isNotEmpty;
       if (keyUiIsReady) break;
       await tester.runAsync(
         () => Future<void>.delayed(const Duration(milliseconds: 50)),
@@ -33,9 +33,10 @@ void main() {
     }
 
     if (find.text('Connect OpenRouter').evaluate().isEmpty) {
-      final keyButton = find.text('Narrator ready').evaluate().isNotEmpty
-          ? find.text('Narrator ready')
-          : find.text('Enter key');
+      final keyButton =
+          find.byTooltip('Change narrator key').evaluate().isNotEmpty
+          ? find.byTooltip('Change narrator key')
+          : find.byTooltip('Connect narrator');
       await tester.tap(keyButton);
       await tester.pump(const Duration(milliseconds: 300));
     }

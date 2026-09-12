@@ -194,6 +194,61 @@ final class NarrationEngine {
     }
   }
 
+  /// Synthesizes and queues a host-supplied line through the normal playback
+  /// pipeline. This is useful for startup announcements that should hand off
+  /// seamlessly to generated narration.
+  Future<NarrationOutcome> speak(String text) async {
+    if (_closed) {
+      throw StateError('The narration engine is closed.');
+    }
+    final spokenText = text.trim();
+    if (spokenText.isEmpty) {
+      throw ArgumentError.value(text, 'text', 'Must not be empty.');
+    }
+
+    final observedAt = _clock();
+    const captures = <CapturedImage>[];
+    if (_busyGeneration == _generation) {
+      return _skip(captures, observedAt, SilenceReason.busy.message);
+    }
+
+    final operationGeneration = _generation;
+    _busyGeneration = operationGeneration;
+    try {
+      final track = await _speechSynthesizer.synthesize(spokenText);
+      if (!_isCurrent(operationGeneration)) {
+        return _skip(captures, observedAt, 'The engine was stopped.');
+      }
+
+      final queued = _QueuedNarration(
+        captures: captures,
+        observedAt: observedAt,
+        text: spokenText,
+        motifs: const <String>[],
+        canonUpdates: const <String, String>{},
+        track: track,
+        generation: operationGeneration,
+      );
+      _enqueue(queued);
+      _releasePreparation(operationGeneration);
+      return await queued.completed.future;
+    } catch (error) {
+      if (!_isCurrent(operationGeneration)) {
+        return _skip(captures, observedAt, 'The engine was stopped.');
+      }
+      _emit(
+        NarrationFailed(
+          captures: captures,
+          observedAt: observedAt,
+          error: error,
+        ),
+      );
+      return NarrationOutcome.failed(observedAt: observedAt, error: error);
+    } finally {
+      _releasePreparation(operationGeneration);
+    }
+  }
+
   void _releasePreparation(int operationGeneration) {
     if (_busyGeneration == operationGeneration) {
       _busyGeneration = null;

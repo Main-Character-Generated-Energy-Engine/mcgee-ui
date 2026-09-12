@@ -321,6 +321,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
       final previousRuntime = _narrationRuntime;
       final previousAudioOutput = _audioOutput;
       final previousEventSubscription = _narrationEventSubscription;
+      final shouldSpeakStartupLine = previousRuntime == null;
       if (!mounted) {
         await runtime.close();
         await audioOutput.dispose();
@@ -351,6 +352,17 @@ class _CameraCapturePageState extends State<CameraCapturePage>
       await previousEventSubscription?.cancel();
       await previousRuntime?.close();
       await previousAudioOutput?.dispose();
+      if (shouldSpeakStartupLine &&
+          mounted &&
+          identical(runtime, _narrationRuntime)) {
+        final outcome = await runtime.speakStartupLine();
+        if (mounted && identical(runtime, _narrationRuntime)) {
+          setState(
+            () => _narrationUnavailable =
+                outcome.kind == NarrationOutcomeKind.failed,
+          );
+        }
+      }
     } catch (_) {
       if (mounted) setState(() => _narrationUnavailable = true);
     } finally {
@@ -489,23 +501,19 @@ class _CameraCapturePageState extends State<CameraCapturePage>
                 Positioned(
                   top: 12,
                   right: 12,
-                  child: FilledButton.tonalIcon(
+                  child: IconButton.filledTonal(
                     onPressed: _isSelectingKey
                         ? null
                         : () => _configureOpenRouterKey(tryDefaultFile: false),
+                    tooltip: _narrationRuntime == null
+                        ? 'Connect narrator'
+                        : 'Change narrator key',
                     icon: Icon(
                       _narrationRuntime == null
                           ? Icons.key_rounded
                           : _narrationUnavailable
                           ? Icons.volume_off_rounded
                           : Icons.volume_up_rounded,
-                    ),
-                    label: Text(
-                      _isSelectingKey
-                          ? 'Connecting…'
-                          : _narrationRuntime == null
-                          ? 'Enter key'
-                          : 'Narrator ready',
                     ),
                   ),
                 ),
@@ -624,13 +632,20 @@ class _CameraCapturePageState extends State<CameraCapturePage>
               left: 20,
               right: 20,
               bottom: 18,
-              child: Text(
-                narration,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 16,
-                  shadows: <Shadow>[Shadow(color: Colors.black, blurRadius: 5)],
+              child: AnimatedOpacity(
+                opacity: _isNarrationPlaying ? 1 : 0,
+                duration: const Duration(milliseconds: 500),
+                curve: Curves.easeOut,
+                child: Text(
+                  narration,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                    shadows: <Shadow>[
+                      Shadow(color: Colors.black, blurRadius: 5),
+                    ],
+                  ),
                 ),
               ),
             ),

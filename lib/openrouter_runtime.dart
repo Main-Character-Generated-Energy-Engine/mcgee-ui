@@ -68,6 +68,11 @@ final class OpenRouterNarrationRuntime {
   Stream<NarrationEngineEvent> get events => _engine.events;
   bool get isPlaying => _engine.isPlaying;
 
+  Future<NarrationOutcome> speakStartupLine() {
+    if (_closed) throw StateError('The narration runtime is closed.');
+    return _engine.speak("It's time for some main character energy.");
+  }
+
   Future<NarrationOutcome?> addCapture({
     required StoredCapture capture,
     required DateTime capturedAt,
