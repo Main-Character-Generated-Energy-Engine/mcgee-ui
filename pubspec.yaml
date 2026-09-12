@@ -7,13 +7,18 @@ environment:
   sdk: ^3.11.5
 
 dependencies:
+  audioplayers: ^6.8.1
+  file_selector: ^1.1.0
   flutter:
     sdk: flutter
   camera: ^0.11.2+1
   camera_windows: ^0.2.6+5
   flutter_svg: ^2.3.0
-  win32: ^6.4.0
   ffi: ^2.2.0
+  narration_engine:
+    path: packages/narration_engine
+  path_provider: ^2.1.6
+  win32: ^6.4.0
 
 dev_dependencies:
   flutter_test:

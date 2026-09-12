@@ -3,10 +3,18 @@ import 'dart:io';
 
 import 'package:camera/camera.dart';
 import 'package:ffi/ffi.dart';
+import 'package:file_selector/file_selector.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:narration_engine/narration_engine.dart';
+import 'package:narration_engine/openrouter.dart';
 import 'package:win32/win32.dart';
+
+import 'audio_output.dart';
+import 'capture_store.dart';
+import 'openrouter_runtime.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -14,7 +22,9 @@ void main() {
 }
 
 class MainApp extends StatelessWidget {
-  const MainApp({super.key});
+  const MainApp({super.key, this.home});
+
+  final Widget? home;
 
   @override
   Widget build(BuildContext context) {
@@ -29,7 +39,7 @@ class MainApp extends StatelessWidget {
         scaffoldBackgroundColor: const Color(0xff101514),
         useMaterial3: true,
       ),
-      home: const CameraCapturePage(),
+      home: home ?? const CameraCapturePage(),
     );
   }
 }
@@ -47,17 +57,25 @@ class _CameraCapturePageState extends State<CameraCapturePage>
   late final AnimationController _entryController;
   late final Animation<double> _previewEntry;
   Timer? _captureTimer;
-  Directory? _captureDirectory;
+  CaptureStore? _captureStore;
+  FlutterAudioOutput? _audioOutput;
+  OpenRouterNarrationRuntime? _narrationRuntime;
   String? _error;
-  int _sceneCount = 0;
+  String? _lastNarration;
   bool _isRecording = false;
   bool _isCapturing = false;
   bool _isInitializingCamera = false;
   bool _isAppActive = true;
+  bool _isSelectingKey = false;
+  bool _narrationUnavailable = false;
   String _selectedActor = 'Morgan Freeman';
   File? _switchSoundFile;
 
-  static const _actors = ['Morgan Freeman', 'David Attenborough', 'Jade'];
+  static const _actors = <String, OpenRouterVoiceOption>{
+    'Morgan Freeman': OpenRouterVoiceOption.morganFreeman,
+    'David Attenborough': OpenRouterVoiceOption.davidAttenborough,
+    'Jade': OpenRouterVoiceOption.jade,
+  };
 
   @override
   void initState() {
@@ -89,10 +107,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
         );
       }
 
-      final captureDirectory = Directory(
-        '${Directory.current.path}/captures_webcam',
-      );
-      await captureDirectory.create(recursive: true);
+      final captureStore = await createCaptureStore();
 
       final controller = CameraController(
         cameras.first,
@@ -108,11 +123,8 @@ class _CameraCapturePageState extends State<CameraCapturePage>
 
       setState(() {
         _controller = controller;
-        _captureDirectory = captureDirectory;
+        _captureStore = captureStore;
         _error = null;
-        if (_sceneCount == 0) {
-          _sceneCount = 1;
-        }
         _isRecording = true;
       });
       _entryController.forward(from: 0);
@@ -137,6 +149,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
   void _togglePause() {
     if (_isRecording) {
       _captureTimer?.cancel();
+      unawaited(_narrationRuntime?.stop());
       setState(() => _isRecording = false);
       return;
     }
@@ -159,6 +172,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
   void _selectActor(String actor) {
     unawaited(_playSwitchSound());
     setState(() => _selectedActor = actor);
+    _narrationRuntime?.setVoice(_actors[actor]!);
   }
 
   Future<void> _playSwitchSound() async {
@@ -198,10 +212,10 @@ class _CameraCapturePageState extends State<CameraCapturePage>
 
   Future<void> _capturePhoto() async {
     final controller = _controller;
-    final directory = _captureDirectory;
+    final captureStore = _captureStore;
     if (controller == null ||
         !controller.value.isInitialized ||
-        directory == null) {
+        captureStore == null) {
       return;
     }
     if (_isCapturing || controller.value.isTakingPicture) {
@@ -212,8 +226,16 @@ class _CameraCapturePageState extends State<CameraCapturePage>
     try {
       final timestamp = DateTime.now().millisecondsSinceEpoch ~/ 1000;
       final image = await controller.takePicture();
-      final destination = File('${directory.path}/$timestamp.jpg');
-      await File(image.path).copy(destination.path);
+      final capture = await captureStore.save(
+        timestamp: timestamp,
+        sourcePath: image.path,
+        readBytes: image.readAsBytes,
+      );
+      final capturedAt = DateTime.fromMillisecondsSinceEpoch(
+        timestamp * 1000,
+        isUtc: true,
+      );
+      unawaited(_narrateCapture(capture, capturedAt));
     } on CameraException catch (exception) {
       if (mounted) {
         setState(() => _error = exception.description ?? exception.code);
@@ -223,9 +245,82 @@ class _CameraCapturePageState extends State<CameraCapturePage>
     }
   }
 
+  Future<void> _narrateCapture(
+    StoredCapture capture,
+    DateTime capturedAt,
+  ) async {
+    final runtime = _narrationRuntime;
+    if (runtime == null) return;
+    try {
+      final outcome = await runtime.addCapture(
+        capture: capture,
+        capturedAt: capturedAt,
+      );
+      if (!mounted ||
+          outcome == null ||
+          !identical(runtime, _narrationRuntime)) {
+        return;
+      }
+      setState(() {
+        _narrationUnavailable = outcome.kind == NarrationOutcomeKind.failed;
+        if (outcome.kind == NarrationOutcomeKind.spoken) {
+          _lastNarration = outcome.text;
+        }
+      });
+    } catch (_) {
+      if (mounted && identical(runtime, _narrationRuntime)) {
+        setState(() => _narrationUnavailable = true);
+      }
+    }
+  }
+
+  Future<void> _selectOpenRouterKey() async {
+    if (_isSelectingKey) return;
+    setState(() => _isSelectingKey = true);
+    try {
+      const keyFileType = XTypeGroup(label: 'OpenRouter key file');
+      final keyFile = await openFile(
+        acceptedTypeGroups: const <XTypeGroup>[keyFileType],
+      );
+      if (keyFile == null) return;
+      final key = (await keyFile.readAsString()).trim();
+      final audioOutput = FlutterAudioOutput();
+      late final OpenRouterNarrationRuntime runtime;
+      try {
+        runtime = OpenRouterNarrationRuntime(
+          apiKey: key,
+          audioOutput: audioOutput,
+          voice: _actors[_selectedActor]!,
+        );
+      } catch (_) {
+        await audioOutput.dispose();
+        rethrow;
+      }
+
+      final previousRuntime = _narrationRuntime;
+      final previousAudioOutput = _audioOutput;
+      if (!mounted) {
+        await runtime.close();
+        await audioOutput.dispose();
+        return;
+      }
+      setState(() {
+        _narrationRuntime = runtime;
+        _audioOutput = audioOutput;
+        _narrationUnavailable = false;
+      });
+      await previousRuntime?.close();
+      await previousAudioOutput?.dispose();
+    } catch (_) {
+      if (mounted) setState(() => _narrationUnavailable = true);
+    } finally {
+      if (mounted) setState(() => _isSelectingKey = false);
+    }
+  }
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (Platform.isWindows) {
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.windows) {
       return;
     }
     if (state == AppLifecycleState.inactive ||
@@ -240,6 +335,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
         });
       }
       unawaited(controller?.dispose());
+      unawaited(_narrationRuntime?.stop());
     } else if (state == AppLifecycleState.resumed) {
       _isAppActive = true;
       _initializeCamera();
@@ -252,6 +348,14 @@ class _CameraCapturePageState extends State<CameraCapturePage>
     _captureTimer?.cancel();
     _entryController.dispose();
     _controller?.dispose();
+    final narrationRuntime = _narrationRuntime;
+    final audioOutput = _audioOutput;
+    unawaited(
+      Future<void>(() async {
+        await narrationRuntime?.close();
+        await audioOutput?.dispose();
+      }),
+    );
     super.dispose();
   }
 
@@ -268,11 +372,37 @@ class _CameraCapturePageState extends State<CameraCapturePage>
         child: ColoredBox(
           color: Colors.black,
           child: SafeArea(
-            child: Center(
-              child: _buildEntryReveal(
-                _previewEntry,
-                _buildPreview(controller, isReady),
-              ),
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                Center(
+                  child: _buildEntryReveal(
+                    _previewEntry,
+                    _buildPreview(controller, isReady),
+                  ),
+                ),
+                Positioned(
+                  top: 12,
+                  right: 12,
+                  child: FilledButton.tonalIcon(
+                    onPressed: _isSelectingKey ? null : _selectOpenRouterKey,
+                    icon: Icon(
+                      _narrationRuntime == null
+                          ? Icons.key_rounded
+                          : _narrationUnavailable
+                          ? Icons.volume_off_rounded
+                          : Icons.volume_up_rounded,
+                    ),
+                    label: Text(
+                      _isSelectingKey
+                          ? 'Loading…'
+                          : _narrationRuntime == null
+                          ? 'Select key'
+                          : 'Narrator ready',
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         ),
@@ -354,6 +484,21 @@ class _CameraCapturePageState extends State<CameraCapturePage>
           if (!_isRecording)
             const Center(
               child: Icon(Icons.pause_rounded, color: Colors.white70, size: 72),
+            ),
+          if (_lastNarration case final narration?)
+            Positioned(
+              left: 20,
+              right: 20,
+              bottom: 18,
+              child: Text(
+                narration,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 16,
+                  shadows: <Shadow>[Shadow(color: Colors.black, blurRadius: 5)],
+                ),
+              ),
             ),
         ],
       ),
@@ -459,7 +604,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
           children: [
             for (var index = 0; index < _actors.length; index++)
               InkWell(
-                onTap: () => _selectActor(_actors[index]),
+                onTap: () => _selectActor(_actors.keys.elementAt(index)),
                 borderRadius: BorderRadius.circular(100),
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 180),
@@ -467,10 +612,12 @@ class _CameraCapturePageState extends State<CameraCapturePage>
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
                     border: Border.all(
-                      color: _selectedActor == _actors[index]
+                      color: _selectedActor == _actors.keys.elementAt(index)
                           ? Colors.white
                           : Colors.white30,
-                      width: _selectedActor == _actors[index] ? 3 : 1,
+                      width: _selectedActor == _actors.keys.elementAt(index)
+                          ? 3
+                          : 1,
                     ),
                   ),
                   child: CircleAvatar(
