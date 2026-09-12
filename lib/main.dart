@@ -592,6 +592,26 @@ class _CameraCapturePageState extends State<CameraCapturePage>
 class _SpeakerTexturePainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
+    final depthPaint = Paint()
+      ..shader = const LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [
+          Color(0xff3b4144),
+          Color(0xff151719),
+          Color(0xff050607),
+          Color(0xff24272a),
+        ],
+        stops: [0, 0.22, 0.7, 1],
+      ).createShader(Offset.zero & size);
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTWH(3, 3, size.width - 6, size.height - 6),
+        Radius.circular(size.width * 0.42),
+      ),
+      depthPaint,
+    );
+
     final innerRim = Paint()
       ..color = Colors.white.withValues(alpha: 0.14)
       ..style = PaintingStyle.stroke
@@ -610,14 +630,31 @@ class _SpeakerTexturePainter extends CustomPainter {
     final ribPaint = Paint()
       ..color = Colors.white.withValues(alpha: 0.035)
       ..strokeWidth = 1;
+    final blueRibPaint = Paint()
+      ..color = const Color(0xff6e9aa3).withValues(alpha: 0.09)
+      ..strokeWidth = 1;
+    final bronzeRibPaint = Paint()
+      ..color = const Color(0xffb28b68).withValues(alpha: 0.07)
+      ..strokeWidth = 1;
     final shadowPaint = Paint()
       ..color = Colors.black.withValues(alpha: 0.2)
       ..strokeWidth = 2;
     for (double x = 5; x < size.width; x += 7) {
-      canvas.drawLine(Offset(x, 0), Offset(x, size.height), ribPaint);
+      final rib = x.toInt() % 21 == 0
+          ? blueRibPaint
+          : x.toInt() % 28 == 0
+          ? bronzeRibPaint
+          : ribPaint;
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height), rib);
     }
     for (double x = 8; x < size.width; x += 28) {
       canvas.drawLine(Offset(x, 0), Offset(x, size.height), shadowPaint);
+    }
+
+    final dustPaint = Paint()..color = Colors.white.withValues(alpha: 0.1);
+    for (double y = 18; y < size.height; y += 31) {
+      canvas.drawCircle(Offset(size.width * 0.22, y), 0.7, dustPaint);
+      canvas.drawCircle(Offset(size.width * 0.78, y + 9), 0.6, dustPaint);
     }
   }
 
