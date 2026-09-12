@@ -270,11 +270,20 @@ class _CameraCapturePageState extends State<CameraCapturePage>
       Stack(
         fit: StackFit.expand,
         children: [
-          Center(
-            child: AspectRatio(
-              aspectRatio: controller.value.aspectRatio,
-              child: CameraPreview(controller),
-            ),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final previewHeight =
+                  constraints.maxWidth / controller.value.aspectRatio;
+              return FittedBox(
+                fit: BoxFit.cover,
+                clipBehavior: Clip.hardEdge,
+                child: SizedBox(
+                  width: constraints.maxWidth,
+                  height: previewHeight,
+                  child: CameraPreview(controller),
+                ),
+              );
+            },
           ),
           IgnorePointer(child: CustomPaint(painter: _OldTvEffectPainter())),
           if (!_isRecording)
@@ -288,89 +297,176 @@ class _CameraCapturePageState extends State<CameraCapturePage>
 
   Widget _buildTelevision(Widget screenContent) {
     return SizedBox.expand(
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: const Color(0xff594238),
-          border: Border.all(color: const Color(0xffc28b5e), width: 4),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.all(22),
-          child: Row(
-            children: [
-              Expanded(
-                flex: 8,
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: const Color(0xff151b1a),
-                    borderRadius: BorderRadius.circular(26),
-                    border: Border.all(
-                      color: const Color(0xff211f1d),
-                      width: 10,
-                    ),
-                    boxShadow: const [
-                      BoxShadow(
-                        color: Colors.black87,
-                        blurRadius: 12,
-                        spreadRadius: 2,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final compact = constraints.maxWidth < 700;
+          final framePadding = compact ? 8.0 : 14.0;
+          final controlGap = compact ? 6.0 : 10.0;
+          return DecoratedBox(
+            decoration: BoxDecoration(
+              color: Colors.black,
+              border: Border.all(color: Colors.white, width: compact ? 3 : 5),
+              borderRadius: BorderRadius.circular(compact ? 10 : 18),
+            ),
+            child: Padding(
+              padding: EdgeInsets.all(framePadding),
+              child: Row(
+                children: [
+                  Expanded(
+                    flex: 8,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: Colors.black,
+                        borderRadius: BorderRadius.circular(compact ? 10 : 18),
+                        border: Border.all(
+                          color: Colors.white,
+                          width: compact ? 4 : 6,
+                        ),
                       ),
-                    ],
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(compact ? 6 : 12),
+                        child: screenContent,
+                      ),
+                    ),
                   ),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(16),
-                    child: screenContent,
+                  SizedBox(width: controlGap),
+                  Expanded(
+                    flex: 2,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        border: Border(
+                          left: BorderSide(
+                            color: Colors.white,
+                            width: compact ? 2 : 4,
+                          ),
+                        ),
+                      ),
+                      child: Padding(
+                        padding: EdgeInsets.fromLTRB(
+                          compact ? 5 : 10,
+                          compact ? 5 : 10,
+                          compact ? 2 : 4,
+                          compact ? 5 : 10,
+                        ),
+                        child: _buildTvControls(),
+                      ),
+                    ),
                   ),
-                ),
+                ],
               ),
-              const SizedBox(width: 22),
-              Expanded(flex: 2, child: _buildTvControls()),
-            ],
-          ),
-        ),
+            ),
+          );
+        },
       ),
     );
   }
 
   Widget _buildTvControls() {
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        Container(
-          width: 52,
-          height: 52,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: const Color(0xff8a5544),
-            border: Border.all(color: const Color(0xffd49b66), width: 4),
-          ),
-          child: const Icon(Icons.power_settings_new, color: Color(0xfff0d0a3)),
-        ),
-        const SizedBox(height: 28),
-        Expanded(
-          child: Container(
-            margin: const EdgeInsets.symmetric(horizontal: 6),
-            decoration: BoxDecoration(
-              color: const Color(0xff302a27),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: List.generate(
-                  7,
-                  (_) => Container(
-                    height: 2,
-                    width: double.infinity,
-                    margin: const EdgeInsets.symmetric(horizontal: 8),
-                    color: const Color(0xff8c6b57),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 70;
+        final dialSize = compact ? constraints.maxWidth * 0.72 : 58.0;
+        final buttonWidth = compact ? constraints.maxWidth * 0.22 : 18.0;
+        return Column(
+          children: [
+            _buildTvDial(0.75, dialSize),
+            SizedBox(height: compact ? 6 : 12),
+            _buildTvDial(-0.9, dialSize),
+            SizedBox(height: compact ? 6 : 12),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: List.generate(
+                3,
+                (_) => Container(
+                  width: buttonWidth,
+                  height: compact ? 5 : 8,
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(3),
                   ),
                 ),
               ),
             ),
-          ),
-        ),
-      ],
+            SizedBox(height: compact ? 7 : 14),
+            Expanded(
+              child: Container(
+                margin: EdgeInsets.symmetric(horizontal: compact ? 2 : 6),
+                decoration: BoxDecoration(
+                  color: Colors.black,
+                  border: Border.all(
+                    color: Colors.white,
+                    width: compact ? 2 : 3,
+                  ),
+                  borderRadius: BorderRadius.circular(100),
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(100),
+                  child: Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      children: List.generate(
+                        compact ? 7 : 11,
+                        (_) => Container(
+                          height: compact ? 1 : 2,
+                          width: double.infinity,
+                          margin: EdgeInsets.symmetric(
+                            horizontal: compact ? 3 : 7,
+                          ),
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
+
+  Widget _buildTvDial(double angle, double size) {
+    return SizedBox(
+      width: size,
+      height: size,
+      child: CustomPaint(painter: _TvDialPainter(angle)),
+    );
+  }
+}
+
+class _TvDialPainter extends CustomPainter {
+  const _TvDialPainter(this.angle);
+
+  final double angle;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final outerPaint = Paint()
+      ..color = Colors.white
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2;
+    final innerPaint = Paint()
+      ..color = Colors.white
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1;
+    canvas.drawCircle(center, size.width * 0.47, outerPaint);
+    canvas.drawCircle(center, size.width * 0.36, innerPaint);
+    canvas.save();
+    canvas.translate(center.dx, center.dy);
+    canvas.rotate(angle);
+    canvas.drawLine(
+      Offset(0, -size.height * 0.27),
+      Offset(0, size.height * 0.27),
+      outerPaint,
+    );
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(covariant _TvDialPainter oldDelegate) =>
+      oldDelegate.angle != angle;
 }
 
 class _OldTvEffectPainter extends CustomPainter {
