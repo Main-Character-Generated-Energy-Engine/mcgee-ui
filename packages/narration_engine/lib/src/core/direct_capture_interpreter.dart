@@ -15,11 +15,15 @@ final class DirectCaptureInterpreter implements SceneInterpreter {
     }
     return SceneObservation(
       description:
-          'The attached captures are chronological. Interpret only their '
-          'visible action and meaningful change.',
+          'The attached captures are chronological evidence for an explicitly '
+          'fictional, high-stakes interpretation of the unfolding action.',
       fingerprint: 'direct-captures:${captures.last.id}',
       details: const <String, String>{
-        'instruction': 'Describe only what is visible in the attached images.',
+        'instruction':
+            'Use the images as dramatic evidence, then invent theatrical '
+            'thoughts and motives while narrating the subject’s actions or '
+            'deliberate inaction in exclusively third-person thriller '
+            'voiceover; render inner monologue only as indirect narration.',
       },
     );
   }

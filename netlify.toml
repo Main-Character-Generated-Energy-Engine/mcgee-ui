@@ -1,0 +1,20 @@
+[build]
+  publish = "build/web"
+  functions = "netlify/functions"
+
+[[redirects]]
+  from = "/api/narrate"
+  to = "/.netlify/functions/narrate"
+  status = 200
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    X-Content-Type-Options = "nosniff"
+    X-Frame-Options = "DENY"

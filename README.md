@@ -12,12 +12,27 @@ flutter pub get
 flutter run -d chrome
 ```
 
-Allow camera access when prompted. IO builds first try
-`.secrets/openrouter-key`. Browsers cannot silently read host filesystem paths,
-so the web app instead opens a text dialog where you can paste the key. The app
-keeps the key in memory for the current page only. It does not print it, store
-it in browser storage, package it as an asset, or compile it into the web
-bundle.
+Allow camera access when prompted. The web app does not request, receive, or
+embed provider credentials. OpenRouter and Fish Audio keys exist only in the
+Netlify Function environment. Native IO builds still read local secret files.
+
+Web narration uses the scale-to-zero Netlify Function at `/api/narrate`. The
+function opens OpenRouter's text stream and Fish Audio's live WebSocket in
+parallel, feeds text deltas into Fish as they arrive, then returns one MP3 plus
+the spoken text. No local relay or always-on VM is required. If Fish fails, the
+function automatically synthesizes the completed line through OpenRouter.
+
+Local web development defaults to
+`https://mcgee-narrator.netlify.app/api/narrate`. Override it when running a
+different deployment with:
+
+```sh
+flutter run -d chrome \
+  --dart-define=NARRATION_API_URL=https://example.netlify.app/api/narrate
+```
+
+Native IO builds can still connect directly to Fish using
+`.secrets/fishaudio-key`; those builds do not use the Netlify endpoint.
 
 The browser samples one JPEG every two seconds, resizes it to a 512-pixel
 longest edge, and encodes it at JPEG quality 65 before submission. The live path
@@ -25,7 +40,8 @@ sends that frame straight to the narration model, avoiding both the old
 three-frame/ten-second warm-up and a separate sequential vision request. While
 preparation is busy, newer frames collapse into one latest-frame slot. Spoken
 MP3 bytes are played through the host's `AudioOutput` adapter, and the line is
-also shown as a subtitle.
+also shown as a subtitle. A randomized 0.5–2 second pause separates completed
+narration segments so prefetched passages do not play back-to-back.
 
 Browser captures remain in memory because a web page cannot write the host file
 contract directly. IO hosts use application support storage and save:
@@ -44,10 +60,12 @@ prefix, including provider HTTP errors and stack traces when available.
   offline generator, and package tests.
 - `lib/openrouter_runtime.dart`: the app's composition root. It owns one
   long-lived engine and the low-latency single-frame narration path.
+- `lib/netlify_narration_renderer.dart`: fused web request/response adapter.
+- `netlify/functions/narrate.mjs`: on-demand OpenRouter-to-Fish orchestration.
 - `lib/audio_output.dart`: `audioplayers` implementation of `AudioOutput`.
 - `lib/capture_store*.dart`: bytes in the browser; timestamped files on IO
   platforms.
-- `lib/main.dart`: camera lifecycle, two-second sampling, key entry, and
+- `lib/main.dart`: camera lifecycle, two-second sampling, startup choices, and
   host UI only.
 
 The host should keep one engine for a session so narrative memory, fictional
@@ -57,10 +75,11 @@ windows. It should call `stop()` when the app lifecycle suspends capture and
 Do not move camera ownership or audio playback into the package.
 
 The package adapters default to `openai/gpt-5.6-sol`, used as a multimodal
-writer in one pass with reasoning disabled for latency. Live passages are one
-10–20-word sentence and are discarded when their source frame is more than six
-seconds old. Speech defaults to Fish Audio S2.1 Pro with the Morgan Freeman
-preset.
+writer in one pass with reasoning disabled for latency. OpenRouter is asked to
+rank providers by latency. Live passages are one 10–20-word sentence and are
+discarded when their source frame is more than 20 seconds old, leaving enough
+time for multimodal writing and speech synthesis. Narration text streams into
+Fish Audio S2.1 concurrently instead of waiting for the full sentence first.
 The host exposes exactly three narrator choices:
 
 ```dart
@@ -71,6 +90,11 @@ OpenRouterVoiceOption.jade              // Grok Voice TTS `eve`
 
 Each typed option keeps its provider model and voice ID paired. Never place a
 raw voice ID, API key, or face-identification behavior in the core.
+
+At startup the host also exposes English, French, Spanish, Italian, and Catalan
+narration. Each language has a fully localized editorial prompt and startup
+line; the selected `en`, `fr`, `es`, `it`, or `ca` value is sent to the
+Netlify function as an additional high-priority language constraint.
 
 ## Validation
 
@@ -85,11 +109,27 @@ dart test
 dart run bin/generate_webcam_track.dart
 ```
 
+## Deploy the web app
+
+The Netlify site is `mcgee-narrator`. Provider keys are server-side environment
+variables and must never be added to Flutter assets or committed:
+
+```sh
+netlify env:set OPENROUTER_API_KEY "$(<.secrets/openrouter-key)" \
+  --context production --secret
+netlify env:set FISH_AUDIO_API_KEY "$(<.secrets/fishaudio-key)" \
+  --context production --secret
+npm install
+npm test
+flutter build web --release
+netlify deploy --prod --dir=build/web --functions=netlify/functions
+```
+
 The offline generator reads `packages/narration_engine/.secrets/openrouter-key`
 by default. That nested secret file is intentionally absent from Git; pass
 `--api-key-file PATH` when the key lives elsewhere.
 
-This client-only key flow is for the local MVP. Before public deployment, use a
-restricted user-controlled OpenRouter key or an authentication design suitable
-for untrusted clients. Do not embed a shared production credential in web
-assets or `--dart-define` values.
+The private-circle web endpoint relies on its origin policy, per-IP rate limit,
+and unadvertised deployment rather than an end-user login. Add real user
+authentication before making the URL public. Do not embed shared provider
+credentials in web assets or `--dart-define` values.

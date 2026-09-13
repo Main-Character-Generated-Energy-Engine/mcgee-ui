@@ -69,11 +69,27 @@ void main() {
       expect(narrationBody['reasoning'], {'effort': 'none'});
       expect(narrationBody['store'], isFalse);
       expect(_schemaName(narrationBody), 'narration_decision');
+      expect(narrationBody['instructions'], contains('grandiloquent urgency'));
+      expect(
+        (narrationBody['instructions'] as String).toLowerCase(),
+        isNot(contains('silence')),
+      );
+      final text = narrationBody['text'] as Map;
+      final format = text['format'] as Map;
+      final schema = format['schema'] as Map;
+      final properties = schema['properties'] as Map;
+      final action = properties['action'] as Map;
+      expect(action['enum'], ['speak']);
       final input = narrationBody['input'] as List;
       final content = (input.single as Map)['content'] as List;
       expect(
-        (content.first as Map)['text'],
-        contains('foreground camera holder'),
+        content.whereType<Map>().where((part) => part['type'] == 'input_text'),
+        contains(
+          predicate<Map>(
+            (part) =>
+                (part['text'] as String).contains('foreground camera holder'),
+          ),
+        ),
       );
       final image = content.whereType<Map>().singleWhere(
         (part) => part['type'] == 'input_image',

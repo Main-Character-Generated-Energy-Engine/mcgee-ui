@@ -10,10 +10,7 @@ void main() {
     final file = File('${directory.path}/openrouter-key');
     await file.writeAsString('  test-key  \n');
 
-    expect(
-      await loadDefaultOpenRouterKey(path: file.path),
-      'test-key',
-    );
+    expect(await loadDefaultOpenRouterKey(path: file.path), 'test-key');
   });
 
   test('returns null when the default key file is missing', () async {

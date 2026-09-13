@@ -131,6 +131,38 @@ final class NarrationDraft {
   final Map<String, String> canonUpdates;
 }
 
+/// A narration whose spoken text is available before generation completes.
+///
+/// [textDeltas] is single-subscription and preserves provider order. The
+/// [completed] future returns the same text as a regular [NarrationDraft] after
+/// the stream ends. Low-latency implementations may leave narrative metadata
+/// empty so speech can begin without waiting for a structured second pass.
+final class NarrationTextStream {
+  const NarrationTextStream({
+    required this.textDeltas,
+    required this.completed,
+  });
+
+  final Stream<String> textDeltas;
+  final Future<NarrationDraft> completed;
+}
+
+/// A validated narration and its already-synthesized audio track.
+final class RenderedNarration {
+  RenderedNarration({required this.draft, required this.track}) {
+    if (!draft.shouldSpeak || (draft.text?.trim().isEmpty ?? true)) {
+      throw ArgumentError.value(
+        draft,
+        'draft',
+        'A rendered narration must contain spoken text.',
+      );
+    }
+  }
+
+  final NarrationDraft draft;
+  final AudioTrack track;
+}
+
 /// Synthesized audio, represented either in memory or by a provider location.
 final class AudioTrack {
   AudioTrack({required this.id, this.bytes, this.location, this.duration}) {

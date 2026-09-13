@@ -47,8 +47,9 @@ void main() {
       expect(narrationBody['reasoning'], {'effort': 'none'});
       expect(
         narrationBody['instructions'],
-        contains('10 to 20 words in one concise sentence'),
+        contains('10 to 20 words in one commanding sentence'),
       );
+      expect(narrationBody['instructions'], contains('grandiloquent urgency'));
       final narrationInput = narrationBody['input'] as List;
       final narrationContent =
           (narrationInput.single as Map)['content'] as List;
@@ -96,6 +97,73 @@ void main() {
     ]);
   });
 
+  test('streams plain narration deltas and completes a valid draft', () async {
+    final api = _FakeStreamingOpenRouterApi();
+    final stream =
+        await OpenRouterNarrationModel(
+          client: api,
+          requireSpokenLine: true,
+          continuous: true,
+          maximumWords: 20,
+        ).narrateStream(
+          const NarrationRequest(
+            prompt: 'Narrate this scene.',
+            observation: SceneObservation(
+              description: 'Someone waits beside a kettle.',
+              fingerprint: 'waiting-kettle',
+            ),
+            captures: [],
+            memory: NarrativeMemorySnapshot(),
+          ),
+        );
+
+    expect(await stream.textDeltas.toList(), [
+      'The kettle',
+      ' maintains',
+      ' the upper hand.',
+    ]);
+    final draft = await stream.completed;
+    expect(draft.shouldSpeak, isTrue);
+    expect(draft.text, 'The kettle maintains the upper hand.');
+    expect(draft.motifs, isEmpty);
+    expect(draft.canonUpdates, isEmpty);
+
+    final body = api.streamingResponseBodies.single;
+    expect(body['model'], 'openai/gpt-5.6-sol');
+    expect(body['max_output_tokens'], 80);
+    expect(body['text'], isNull);
+    expect(
+      body['instructions'],
+      contains('Output only the exact words to speak'),
+    );
+    expect(body['instructions'], contains('grandiloquent urgency'));
+    expect(
+      (body['instructions'] as String).toLowerCase(),
+      isNot(contains('silence')),
+    );
+  });
+
+  test('requires an unconditional spoken line for streaming', () async {
+    final model = OpenRouterNarrationModel(
+      client: _FakeStreamingOpenRouterApi(),
+    );
+
+    await expectLater(
+      model.narrateStream(
+        const NarrationRequest(
+          prompt: 'Narrate this scene.',
+          observation: SceneObservation(
+            description: 'An unchanged room.',
+            fingerprint: 'room',
+          ),
+          captures: [],
+          memory: NarrativeMemorySnapshot(),
+        ),
+      ),
+      throwsStateError,
+    );
+  });
+
   test('finds bundled voice options case-insensitively', () {
     expect(
       OpenRouterVoiceOption.named('Morgan-Freeman'),
@@ -107,6 +175,34 @@ void main() {
     );
     expect(OpenRouterVoiceOption.named('unknown'), isNull);
   });
+}
+
+final class _FakeStreamingOpenRouterApi implements StreamingOpenAiApi {
+  final List<Map<String, Object?>> streamingResponseBodies = [];
+
+  @override
+  Stream<Map<String, Object?>> createResponseStream(
+    Map<String, Object?> body,
+  ) async* {
+    streamingResponseBodies.add(body);
+    yield {'type': 'response.content_part.delta', 'delta': 'The kettle'};
+    yield {'type': 'response.output_text.delta', 'delta': ' maintains'};
+    yield {'type': 'response.output_text.delta', 'delta': ' the upper hand.'};
+    yield {
+      'type': 'response.completed',
+      'response': {'status': 'completed'},
+    };
+  }
+
+  @override
+  Future<Map<String, Object?>> createResponse(Map<String, Object?> body) {
+    throw UnimplementedError();
+  }
+
+  @override
+  Future<Uint8List> createSpeech(Map<String, Object?> body) {
+    throw UnimplementedError();
+  }
 }
 
 final class _FakeOpenRouterApi implements OpenAiApi {

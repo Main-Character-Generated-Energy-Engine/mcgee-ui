@@ -1,12 +1,14 @@
+import 'dart:async';
 import 'dart:convert';
 
 import '../core/contracts.dart';
 import '../core/models.dart';
+import '../core/narration_language.dart';
 import 'capture_path_reader.dart';
 import 'openai_http_client.dart';
 import 'openai_response_parsing.dart';
 
-final class OpenAiNarrationModel implements NarrationModel {
+final class OpenAiNarrationModel implements StreamingNarrationModel {
   const OpenAiNarrationModel({
     required this.client,
     this.model = 'gpt-5.6-sol',
@@ -14,6 +16,7 @@ final class OpenAiNarrationModel implements NarrationModel {
     this.continuous = false,
     this.maximumWords = 24,
     this.includeCaptures = false,
+    this.language = NarrationLanguage.english,
   }) : assert(maximumWords > 0),
        assert(!continuous || maximumWords >= 10);
 
@@ -22,6 +25,7 @@ final class OpenAiNarrationModel implements NarrationModel {
   final bool requireSpokenLine;
   final bool continuous;
   final int maximumWords;
+  final NarrationLanguage language;
 
   /// Adds the request's images to the narration prompt so a multimodal model
   /// can interpret and narrate them in one provider round trip.
@@ -29,11 +33,8 @@ final class OpenAiNarrationModel implements NarrationModel {
 
   @override
   Future<NarrationDraft> narrate(NarrationRequest request) async {
-    final speakingInstruction = requireSpokenLine
-        ? 'Always choose speak, not silence.'
-        : 'Silence is a successful choice when the moment does not earn a line.';
     final formatInstruction = continuous
-        ? 'A spoken passage should contain 10 to $maximumWords words in one concise sentence, with no stage directions.'
+        ? 'The spoken passage must contain 10 to $maximumWords words in one commanding sentence, with no stage directions.'
         : 'A spoken line must be one sentence of at most $maximumWords words, with no stage directions.';
     final response = await client.createResponse({
       'model': model,
@@ -42,17 +43,21 @@ final class OpenAiNarrationModel implements NarrationModel {
       'store': false,
       'instructions':
           '''
-You are the final writer for a restrained, premium nature documentary about an
-ordinary person's day. $speakingInstruction Write dry, precise observational
-wit with affectionate dramatic distance. Stay grounded in the literal scene.
-Avoid stock nature-documentary language, generic grandeur, forced metaphors,
-and repetition. In particular, avoid "natural habitat", "majestic creature",
-"the specimen", "ancient ritual", and "little does it know". Do not force every
-action into a ritual, migration, hunt, or struggle. Understatement is welcome.
-$formatInstruction
-Return an empty text when choosing silence. Motifs are terse labels for comic
-devices used. Canon updates must be fictional continuity worth remembering
-later, and should usually be empty.
+You are the final writer for a thunderous, cinematic natural-history epic about
+an ordinary person's day. Give every moment the gravity of an approaching
+reckoning. Always produce a spoken line. Write with grandiloquent urgency,
+precise detail, and the conviction that history may turn on the protagonist's
+next move. Narrate the visible subject's invented thoughts and motives alongside
+their actions or deliberate inaction, as a thriller-documentary voiceover.
+Write the spoken line exclusively in the third person; never use first- or
+second-person narration. Render inner monologue only as indirect narration,
+never as the subject speaking or thinking in quotation. Invent boldly: assign
+secret intentions, impossible dilemmas, rivalries, betrayals, and
+civilization-scale stakes to ordinary acts.
+Avoid repetition and tired documentary clichés. ${language.writerInstruction}
+$formatInstruction Motifs are terse labels for dramatic devices used. Canon
+updates preserve invented rivalries, vows, threats, and consequences worth
+escalating later.
 ''',
       'input': includeCaptures
           ? await _inputWithCaptures(request)
@@ -67,7 +72,7 @@ later, and should usually be empty.
             'properties': {
               'action': {
                 'type': 'string',
-                'enum': ['speak', 'silence'],
+                'enum': ['speak'],
               },
               'text': {'type': 'string'},
               'reason': {'type': 'string'},
@@ -101,6 +106,186 @@ later, and should usually be empty.
     }
     return draft;
   }
+
+  /// Streams a plain spoken line that can be forwarded directly to live TTS.
+  ///
+  /// This intentionally omits the structured decision envelope used by
+  /// [narrate], because JSON fragments are not safe TTS input. The completed
+  /// draft therefore has empty motifs and canon updates. Callers that need that
+  /// metadata can derive it asynchronously after speech has started.
+  @override
+  Future<NarrationTextStream> narrateStream(NarrationRequest request) async {
+    if (!requireSpokenLine) {
+      throw StateError(
+        'Streaming narration requires requireSpokenLine because speech starts '
+        'before a structured silence decision could be validated.',
+      );
+    }
+    final streamingClient = client;
+    if (streamingClient is! StreamingOpenAiApi) {
+      throw UnsupportedError(
+        '${streamingClient.runtimeType} does not support Responses API streaming.',
+      );
+    }
+
+    final formatInstruction = continuous
+        ? 'The passage must contain 10 to $maximumWords words in one commanding sentence, with no stage directions.'
+        : 'The line must be one sentence of at most $maximumWords words, with no stage directions.';
+    final body = <String, Object?>{
+      'model': model,
+      'reasoning': {'effort': 'none'},
+      'max_output_tokens': 80,
+      'store': false,
+      'instructions':
+          '''
+You are the final writer for a thunderous, cinematic natural-history epic about
+an ordinary person's day. Give every moment the gravity of an approaching
+reckoning. Always produce a spoken line. Write with grandiloquent urgency,
+precise detail, and the conviction that history may turn on the protagonist's
+next move. Narrate the visible subject's invented thoughts and motives alongside
+their actions or deliberate inaction, as a thriller-documentary voiceover.
+Write the spoken line exclusively in the third person; never use first- or
+second-person narration. Render inner monologue only as indirect narration,
+never as the subject speaking or thinking in quotation. Invent boldly: assign
+secret intentions, impossible dilemmas, rivalries, betrayals, and
+civilization-scale stakes to ordinary acts.
+Avoid repetition and tired documentary clichés. ${language.writerInstruction}
+$formatInstruction
+Output only the exact words to speak, without quotation marks, a label, JSON,
+Markdown, commentary, or stage directions.
+''',
+      'input': includeCaptures
+          ? await _inputWithCaptures(request)
+          : request.prompt,
+    };
+
+    final textController = StreamController<String>();
+    final completed = Completer<NarrationDraft>();
+    final text = StringBuffer();
+    String? completedResponseText;
+    var finished = false;
+
+    void fail(Object error, StackTrace stackTrace) {
+      if (finished) return;
+      finished = true;
+      textController.addError(error, stackTrace);
+      unawaited(textController.close());
+      completed.completeError(error, stackTrace);
+    }
+
+    late final StreamSubscription<Map<String, Object?>> subscription;
+    subscription = streamingClient
+        .createResponseStream(body)
+        .listen(
+          (event) {
+            if (finished) return;
+            final error = _streamingResponseError(event);
+            if (error != null) {
+              fail(error, StackTrace.current);
+              return;
+            }
+
+            final delta = _responseTextDelta(event);
+            if (delta != null && delta.isNotEmpty) {
+              text.write(delta);
+              textController.add(delta);
+            }
+            completedResponseText ??= _completedResponseText(event);
+          },
+          onError: fail,
+          onDone: () {
+            if (finished) return;
+            var finalText = text.toString();
+            if (finalText.isEmpty) {
+              final fallback = completedResponseText;
+              if (fallback != null) {
+                finalText = fallback;
+                if (fallback.isNotEmpty) textController.add(fallback);
+              }
+            }
+            finalText = finalText.trim();
+            if (finalText.isEmpty) {
+              fail(
+                const FormatException(
+                  'Responses API stream completed without narration text',
+                ),
+                StackTrace.current,
+              );
+              return;
+            }
+
+            finished = true;
+            unawaited(textController.close());
+            completed.complete(NarrationDraft.speak(finalText));
+          },
+        );
+    textController.onCancel = () async {
+      if (finished) return;
+      finished = true;
+      await subscription.cancel();
+      completed.completeError(
+        StateError('Streaming narration was canceled before completion.'),
+      );
+    };
+
+    return NarrationTextStream(
+      textDeltas: textController.stream,
+      completed: completed.future,
+    );
+  }
+}
+
+String? _responseTextDelta(Map<String, Object?> event) {
+  final type = event['type'];
+  if (type != 'response.output_text.delta' &&
+      type != 'response.content_part.delta') {
+    return null;
+  }
+  final delta = event['delta'];
+  if (delta is String) return delta;
+  if (delta is Map && delta['text'] is String) {
+    return delta['text'] as String;
+  }
+  return null;
+}
+
+String? _completedResponseText(Map<String, Object?> event) {
+  final type = event['type'];
+  if (type != 'response.completed' && type != 'response.done') return null;
+  final response = event['response'];
+  if (response is! Map) return null;
+  try {
+    return extractOpenAiOutputText(
+      response.map((key, value) => MapEntry(key.toString(), value)),
+    );
+  } on FormatException {
+    return null;
+  }
+}
+
+Object? _streamingResponseError(Map<String, Object?> event) {
+  final directError = event['error'];
+  if (directError != null) return _streamError(event['type'], directError);
+
+  final type = event['type'];
+  if (type != 'error' &&
+      type != 'response.failed' &&
+      type != 'response.incomplete') {
+    return null;
+  }
+  final response = event['response'];
+  final nestedError = response is Map ? response['error'] : null;
+  return _streamError(type, nestedError ?? event);
+}
+
+FormatException _streamError(Object? type, Object details) {
+  String? message;
+  if (details is Map && details['message'] is String) {
+    message = details['message'] as String;
+  }
+  return FormatException(
+    'Responses API stream ${type ?? 'failed'}${message == null ? '' : ': $message'}',
+  );
 }
 
 Future<List<Map<String, Object?>>> _inputWithCaptures(

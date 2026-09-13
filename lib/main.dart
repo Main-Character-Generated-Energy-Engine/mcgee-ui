@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:camera/camera.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -10,6 +11,9 @@ import 'package:narration_engine/openrouter.dart';
 
 import 'audio_output.dart';
 import 'capture_store.dart';
+import 'fish_audio_key_loader.dart';
+import 'fish_audio_transport.dart';
+import 'netlify_narration_endpoint.dart';
 import 'openrouter_key_loader.dart';
 import 'openrouter_runtime.dart';
 
@@ -42,7 +46,9 @@ class MainApp extends StatelessWidget {
 }
 
 class CameraCapturePage extends StatefulWidget {
-  const CameraCapturePage({super.key});
+  const CameraCapturePage({super.key, this.ioApiKeyOverride});
+
+  final String? ioApiKeyOverride;
 
   @override
   State<CameraCapturePage> createState() => _CameraCapturePageState();
@@ -53,8 +59,6 @@ enum _ExperienceStage { setup, cameraConsent, live }
 class _CameraCapturePageState extends State<CameraCapturePage>
     with WidgetsBindingObserver, TickerProviderStateMixin {
   CameraController? _controller;
-  final GlobalKey<FormState> _keyFormKey = GlobalKey<FormState>();
-  late final TextEditingController _keyController;
   late final AnimationController _entryController;
   late final AnimationController _binocularsController;
   late final Animation<double> _previewEntry;
@@ -68,15 +72,15 @@ class _CameraCapturePageState extends State<CameraCapturePage>
   bool _isCapturing = false;
   bool _isInitializingCamera = false;
   bool _isAppActive = true;
-  bool _isSelectingKey = false;
+  bool _isConnecting = false;
   bool _narrationUnavailable = false;
   bool _hasStartedNarrationAudio = false;
   bool _isNarrationPlaying = false;
-  bool _isKeyObscured = true;
   bool _startupLineRequested = false;
   _ExperienceStage _experienceStage = _ExperienceStage.setup;
-  String? _keyError;
+  String? _connectionError;
   String _selectedActor = 'Morgan Freeman';
+  NarrationLanguage _selectedLanguage = NarrationLanguage.english;
   AudioPlayer? _switchSoundPlayer;
   Uint8List? _switchSoundBytes;
 
@@ -101,7 +105,6 @@ class _CameraCapturePageState extends State<CameraCapturePage>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _keyController = TextEditingController();
     _entryController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1200),
@@ -115,21 +118,6 @@ class _CameraCapturePageState extends State<CameraCapturePage>
       curve: const Interval(0.18, 0.75, curve: Curves.easeOutCubic),
     );
     _entryController.forward();
-    unawaited(_prefillOpenRouterKey());
-  }
-
-  Future<void> _prefillOpenRouterKey() async {
-    try {
-      final key = await loadDefaultOpenRouterKey();
-      if (!mounted || key == null || _keyController.text.isNotEmpty) return;
-      _keyController.text = key;
-    } catch (error, stackTrace) {
-      _printError(
-        'Default OpenRouter key could not be loaded',
-        error,
-        stackTrace,
-      );
-    }
   }
 
   Future<void> _initializeCamera() async {
@@ -172,12 +160,14 @@ class _CameraCapturePageState extends State<CameraCapturePage>
         _experienceStage = _ExperienceStage.live;
       });
       _entryController.forward(from: 0);
-      _startCaptureLoop(captureImmediately: true);
       final runtime = _narrationRuntime;
       if (!_startupLineRequested && runtime != null) {
         _startupLineRequested = true;
         unawaited(_speakStartupLine(runtime));
       }
+      // Queue live frames behind the startup line deterministically. Calling
+      // speak first claims the engine's preparation slot synchronously.
+      _startCaptureLoop(captureImmediately: true);
     } on CameraException catch (exception, stackTrace) {
       _printError('Camera initialization failed', exception, stackTrace);
       if (mounted) {
@@ -287,30 +277,59 @@ class _CameraCapturePageState extends State<CameraCapturePage>
       if (outcome.kind == NarrationOutcomeKind.spoken &&
           _narrationUnavailable) {
         setState(() => _narrationUnavailable = false);
+      } else if (outcome.kind == NarrationOutcomeKind.failed &&
+          !_narrationUnavailable) {
+        setState(() => _narrationUnavailable = true);
       }
     } catch (error, stackTrace) {
       _printError('Capture narration failed', error, stackTrace);
     }
   }
 
-  Future<void> _connectOpenRouter() async {
-    if (_isSelectingKey) return;
-    if (!(_keyFormKey.currentState?.validate() ?? false)) return;
-    TextInput.finishAutofillContext(shouldSave: false);
+  Future<void> _connectNarration() async {
+    if (_isConnecting) return;
     setState(() {
-      _isSelectingKey = true;
-      _keyError = null;
+      _isConnecting = true;
+      _connectionError = null;
     });
     try {
-      final key = _keyController.text.trim();
+      final narrationEndpoint = kIsWeb
+          ? defaultNetlifyNarrationEndpoint()
+          : null;
+      final apiKey = kIsWeb
+          ? null
+          : widget.ioApiKeyOverride ?? await loadDefaultOpenRouterKey();
+      if (!kIsWeb && apiKey == null) {
+        throw StateError('Native narration requires .secrets/openrouter-key.');
+      }
+      String? fishAudioCredential;
+      if (!kIsWeb) {
+        try {
+          fishAudioCredential = fishAudioTransportCredential(
+            await loadDefaultFishAudioKey(),
+          );
+        } catch (error, stackTrace) {
+          _printError(
+            'Direct Fish Audio configuration unavailable; using OpenRouter TTS',
+            error,
+            stackTrace,
+          );
+        }
+      }
 
       final audioOutput = FlutterAudioOutput();
       late final OpenRouterNarrationRuntime runtime;
       try {
         runtime = OpenRouterNarrationRuntime(
-          apiKey: key,
+          apiKey: apiKey,
           audioOutput: audioOutput,
           voice: _actors[_selectedActor]!,
+          language: _selectedLanguage,
+          fishAudioCredential: fishAudioCredential,
+          fishAudioTransport: fishAudioCredential == null
+              ? null
+              : createFishAudioTransport(),
+          narrationEndpoint: narrationEndpoint,
         );
       } catch (error, stackTrace) {
         _printError('Narration runtime creation failed', error, stackTrace);
@@ -331,8 +350,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
         _audioOutput = audioOutput;
         _narrationUnavailable = false;
         _isNarrationPlaying = false;
-        _experienceStage =
-            (_controller?.value.isInitialized ?? false)
+        _experienceStage = (_controller?.value.isInitialized ?? false)
             ? _ExperienceStage.live
             : _ExperienceStage.cameraConsent;
       });
@@ -340,6 +358,9 @@ class _CameraCapturePageState extends State<CameraCapturePage>
         if (!mounted || !identical(runtime, _narrationRuntime)) return;
         if (event case NarrationFailed(:final error)) {
           _printError('Narration engine failed', error);
+          if (!_narrationUnavailable) {
+            setState(() => _narrationUnavailable = true);
+          }
         }
         final isPlaying = runtime.isPlaying;
         final visiblePhrase = switch (event) {
@@ -379,16 +400,15 @@ class _CameraCapturePageState extends State<CameraCapturePage>
         _startCaptureLoop(captureImmediately: true);
       }
     } catch (error, stackTrace) {
-      _printError('OpenRouter configuration failed', error, stackTrace);
+      _printError('Narration configuration failed', error, stackTrace);
       if (mounted) {
         setState(() {
           _narrationUnavailable = true;
-          _keyError =
-              'That key could not be connected. Check it and try again.';
+          _connectionError = 'Narration could not connect. Please try again.';
         });
       }
     } finally {
-      if (mounted) setState(() => _isSelectingKey = false);
+      if (mounted) setState(() => _isConnecting = false);
     }
   }
 
@@ -414,15 +434,6 @@ class _CameraCapturePageState extends State<CameraCapturePage>
         setState(() => _narrationUnavailable = true);
       }
     }
-  }
-
-  void _editConnection() {
-    _captureTimer?.cancel();
-    unawaited(_narrationRuntime?.stop());
-    setState(() {
-      _keyError = null;
-      _experienceStage = _ExperienceStage.setup;
-    });
   }
 
   @override
@@ -455,7 +466,6 @@ class _CameraCapturePageState extends State<CameraCapturePage>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _captureTimer?.cancel();
-    _keyController.dispose();
     _entryController.dispose();
     _binocularsController.dispose();
     unawaited(_narrationEventSubscription?.cancel());
@@ -488,32 +498,11 @@ class _CameraCapturePageState extends State<CameraCapturePage>
         _ExperienceStage.live => ColoredBox(
           color: Colors.black,
           child: SafeArea(
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                Center(
-                  child: _buildEntryReveal(
-                    _previewEntry,
-                    _buildPreview(controller, isReady),
-                  ),
-                ),
-                Positioned(
-                  top: 12,
-                  right: 12,
-                  child: IconButton.filledTonal(
-                    key: const ValueKey('narrator-key-button'),
-                    onPressed: _editConnection,
-                    tooltip: 'Narrator settings',
-                    icon: Icon(
-                      _narrationRuntime == null
-                          ? Icons.key_rounded
-                          : _narrationUnavailable
-                          ? Icons.volume_off_rounded
-                          : Icons.volume_up_rounded,
-                    ),
-                  ),
-                ),
-              ],
+            child: Center(
+              child: _buildEntryReveal(
+                _previewEntry,
+                _buildPreview(controller, isReady),
+              ),
             ),
           ),
         ),
@@ -523,110 +512,102 @@ class _CameraCapturePageState extends State<CameraCapturePage>
 
   Widget _buildSetupScreen() {
     return _buildOnboardingBackground(
-      Form(
-        key: _keyFormKey,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Semantics(
-              label: 'MCgEe',
-              image: true,
-              child: SizedBox(
-                height: 138,
-                child: SvgPicture.asset(
-                  'lib/assets/logo.svg',
-                  fit: BoxFit.contain,
-                ),
+      Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Semantics(
+            label: 'MCgEe',
+            image: true,
+            child: Container(
+              height: 190,
+              clipBehavior: Clip.antiAlias,
+              decoration: BoxDecoration(
+                color: const Color(0xfffff8ec),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: const Color(0xffffb04a), width: 2),
+                boxShadow: const <BoxShadow>[
+                  BoxShadow(
+                    color: Colors.black45,
+                    blurRadius: 24,
+                    offset: Offset(0, 10),
+                  ),
+                ],
               ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Morgan Freeman is ready. A different voice may audition below.',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.white.withValues(alpha: 0.68)),
-            ),
-            const SizedBox(height: 28),
-            _buildSetupActorSelector(),
-            const SizedBox(height: 30),
-            TextFormField(
-              key: const ValueKey('openrouter-key-field'),
-              controller: _keyController,
-              autofocus: false,
-              obscureText: _isKeyObscured,
-              autocorrect: false,
-              enableSuggestions: false,
-              enableIMEPersonalizedLearning: false,
-              autofillHints: null,
-              keyboardType: TextInputType.text,
-              textInputAction: TextInputAction.done,
-              maxLines: 1,
-              expands: false,
-              onChanged: (_) {
-                if (_keyError != null) setState(() => _keyError = null);
-              },
-              onFieldSubmitted: (_) => unawaited(_connectOpenRouter()),
-              decoration: InputDecoration(
-                labelText: 'OpenRouter API key',
-                hintText: 'Paste your key',
-                errorText: _keyError,
-                suffixIcon: IconButton(
-                  onPressed: () {
-                    setState(() => _isKeyObscured = !_isKeyObscured);
-                  },
-                  tooltip: _isKeyObscured ? 'Show key' : 'Hide key',
-                  icon: Icon(
-                    _isKeyObscured
-                        ? Icons.visibility_rounded
-                        : Icons.visibility_off_rounded,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
+                child: ClipRect(
+                  child: Transform.scale(
+                    scale: 2.15,
+                    child: SvgPicture.asset(
+                      'lib/assets/logo.svg',
+                      fit: BoxFit.contain,
+                    ),
                   ),
                 ),
               ),
-              validator: (value) {
-                final key = value?.trim() ?? '';
-                if (key.isEmpty) return 'Paste your OpenRouter key.';
-                if (key.contains(RegExp(r'\s'))) {
-                  return 'The key cannot contain whitespace.';
-                }
-                return null;
-              },
             ),
-            const SizedBox(height: 10),
-            Text(
-              'Kept in memory for this tab only.',
-              style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.52),
-                fontSize: 12,
-              ),
+          ),
+          const SizedBox(height: 24),
+          _buildSetupActorSelector(),
+          const SizedBox(height: 24),
+          DropdownButtonFormField<NarrationLanguage>(
+            key: const ValueKey('narration-language-selector'),
+            initialValue: _selectedLanguage,
+            decoration: const InputDecoration(
+              labelText: 'Narration language',
+              prefixIcon: Icon(Icons.language_rounded),
             ),
-            const SizedBox(height: 24),
-            FilledButton.icon(
-              key: const ValueKey('continue-setup-button'),
-              onPressed: _isSelectingKey ? null : _connectOpenRouter,
-              icon: _isSelectingKey
-                  ? const SizedBox.square(
-                      dimension: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.arrow_forward_rounded),
-              label: Text(_isSelectingKey ? 'Connecting…' : 'Continue'),
-            ),
-            if (_controller?.value.isInitialized ?? false) ...[
-              const SizedBox(height: 8),
-              TextButton(
-                onPressed: _isSelectingKey
-                    ? null
-                    : () {
-                        setState(
-                          () => _experienceStage = _ExperienceStage.live,
-                        );
-                        _startCaptureLoop(captureImmediately: false);
-                      },
-                child: const Text('Back to camera'),
-              ),
+            items: <DropdownMenuItem<NarrationLanguage>>[
+              for (final language in NarrationLanguage.values)
+                DropdownMenuItem<NarrationLanguage>(
+                  value: language,
+                  child: Text(language.nativeName),
+                ),
             ],
+            onChanged: _isConnecting
+                ? null
+                : (language) {
+                    if (language == null) return;
+                    setState(() => _selectedLanguage = language);
+                  },
+          ),
+          if (_connectionError case final error?) ...[
+            const SizedBox(height: 16),
+            Text(
+              error,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Color(0xffffa9a9)),
+            ),
           ],
-        ),
+          const SizedBox(height: 24),
+          FilledButton.icon(
+            key: const ValueKey('continue-setup-button'),
+            onPressed: _isConnecting ? null : _connectNarration,
+            icon: _isConnecting
+                ? const SizedBox.square(
+                    dimension: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.arrow_forward_rounded),
+            label: Text(_isConnecting ? 'Connecting…' : 'Continue'),
+          ),
+          if (_controller?.value.isInitialized ?? false) ...[
+            const SizedBox(height: 8),
+            TextButton(
+              onPressed: _isConnecting
+                  ? null
+                  : () {
+                      setState(() => _experienceStage = _ExperienceStage.live);
+                      _startCaptureLoop(captureImmediately: false);
+                    },
+              child: const Text('Back to camera'),
+            ),
+          ],
+        ],
       ),
     );
   }
@@ -637,11 +618,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const Icon(
-            Icons.auto_awesome_rounded,
-            color: Colors.white,
-            size: 54,
-          ),
+          const Icon(Icons.auto_awesome_rounded, color: Colors.white, size: 54),
           const SizedBox(height: 22),
           const Text(
             'Your story is waiting.',
@@ -704,11 +681,9 @@ class _CameraCapturePageState extends State<CameraCapturePage>
             onPressed: _isInitializingCamera
                 ? null
                 : () {
-                    setState(
-                      () => _experienceStage = _ExperienceStage.setup,
-                    );
+                    setState(() => _experienceStage = _ExperienceStage.setup);
                   },
-            child: const Text('Change narrator or key'),
+            child: const Text('Change narrator or language'),
           ),
         ],
       ),
@@ -743,10 +718,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
                     ),
                   ],
                 ),
-                child: Padding(
-                  padding: const EdgeInsets.all(28),
-                  child: child,
-                ),
+                child: Padding(padding: const EdgeInsets.all(28), child: child),
               ),
             ),
           ),

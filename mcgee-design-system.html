@@ -1,0 +1,693 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MCgEe Design System v1.0</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@600;700;800&family=Archivo:wdth,wght@88..112,400..700&family=Newsreader:ital,opsz,wght@0,6..72,300..500;1,6..72,300..500&display=swap" rel="stylesheet">
+<style>
+/* ============================================================
+   MCgEe — DESIGN TOKENS
+   Main Character Generated Energy Engine
+   v1.0 — token source of truth. Copy this block into the app.
+   ============================================================ */
+:root{
+  /* --- 1. RAW PALETTE ------------------------------------ */
+  /* Gold — the on-air signal. Never a large background. */
+  --gold-050:#fff2e4; --gold-100:#ffddbb; --gold-200:#ffc182;
+  --gold-300:#ffa549; --gold-500:#ff8f1c; /* BRAND */
+  --gold-700:#bf6b15; --gold-800:#80480e; --gold-900:#472808;
+
+  /* Purple — brand surface, off-air, identity. */
+  --purple-050:#eae5ee; --purple-100:#cabdd4; --purple-200:#9e86b0;
+  --purple-300:#724f8d; --purple-500:#4f2370; /* BRAND */
+  --purple-700:#3b1a54; --purple-800:#281238; --purple-900:#160a1f;
+
+  /* Neutral — product surface, capture chrome. */
+  --n-000:#ffffff; --n-050:#e8e8e8; --n-100:#c9c9c9; --n-200:#a3a3a3;
+  --n-300:#6b6b6b; --n-400:#3b3b3b; --n-500:#2c2c2c; --n-600:#262626;
+  --n-700:#1e1e1e; /* BRAND */ --n-800:#161616; --n-900:#0f0f0f;
+
+  /* --- 2. SEMANTIC: PRODUCT (dark, default app chrome) --- */
+  --surface-base:var(--n-700);
+  --surface-raised:var(--n-600);
+  --surface-sunken:var(--n-900);
+  --surface-frame:var(--n-800);
+  --line-hair:var(--n-500);
+  --line-strong:var(--n-400);
+  --text-primary:var(--n-050);
+  --text-secondary:var(--n-100);
+  --text-muted:var(--n-200);
+  --text-inverse:var(--n-700);
+
+  /* --- 3. SEMANTIC: STATE (the colour law) --------------- */
+  --state-live:var(--gold-500);        /* capturing + narrating */
+  --state-live-ink:var(--n-700);       /* text ON gold, 7.3:1 */
+  --state-standby:var(--n-200);        /* armed, not capturing */
+  --state-offair:var(--purple-300);    /* idle / not connected */
+  --state-error:#ff5a4d;
+  --focus-ring:var(--gold-100);        /* 12.95:1 on surface-base */
+
+  /* --- 4. SEMANTIC: BRAND SURFACE (marketing, onboarding) */
+  --brand-bg:var(--purple-500);
+  --brand-bg-deep:var(--purple-700);
+  --brand-ink:var(--n-000);
+  --brand-ink-soft:var(--purple-100);
+  --brand-accent:var(--gold-500);      /* 5.09:1 on purple */
+
+  /* --- 5. TYPE ------------------------------------------- */
+  --font-display:"Poppins","Century Gothic",system-ui,sans-serif;  /* brand, >=20px only */
+  --font-ui:"Archivo",system-ui,"Helvetica Neue",sans-serif;      /* UI + all figures */
+  --font-narration:"Newsreader",Georgia,"Times New Roman",serif;  /* generated script */
+  --step--1:0.75rem;  /* 12px  micro: badges, meta */
+  --step-0:0.875rem;  /* 14px  UI default */
+  --step-1:1rem;      /* 16px  body */
+  --step-2:1.25rem;   /* 20px  narration line */
+  --step-3:1.5625rem; /* 25px  sub-head */
+  --step-4:1.953rem;  /* 31px  section head */
+  --step-5:3.052rem;  /* 49px  display */
+  --lh-tight:1.04; --lh-ui:1.35; --lh-prose:1.55;
+
+  /* --- 6. SHAPE (viewfinder geometry) -------------------- */
+  --r-frame:0;         /* capture surfaces: hard corners */
+  --r-panel:3px;       /* panels, inputs, cards */
+  --r-pill:999px;      /* state + transport controls only */
+  --border-frame:2px;
+  --border-hair:1px;
+
+  /* --- 7. SPACE (4px base) ------------------------------- */
+  --s-1:4px; --s-2:8px; --s-3:12px; --s-4:16px; --s-5:24px;
+  --s-6:32px; --s-7:48px; --s-8:64px; --s-9:96px;
+  --measure:62ch;
+
+  /* --- 8. MOTION ----------------------------------------- */
+  --t-instant:90ms; --t-quick:160ms; --t-considered:280ms;
+  --ease-out:cubic-bezier(.2,.8,.3,1);
+  --pulse-cycle:4s; /* matches the 3–5s capture cadence */
+}
+
+/* ============================================================
+   STYLEGUIDE PAGE (documentation shell — not app code)
+   ============================================================ */
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  *,*::before,*::after{animation:none!important;transition:none!important}
+}
+body{
+  margin:0;background:var(--surface-base);color:var(--text-secondary);
+  font-family:var(--font-ui);font-size:var(--step-0);line-height:var(--lh-ui);
+  font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased;
+}
+.wrap{display:grid;grid-template-columns:210px minmax(0,1fr);gap:var(--s-8);
+  max-width:1180px;margin:0 auto;padding:var(--s-6) var(--s-5) var(--s-9)}
+@media (max-width:820px){.wrap{grid-template-columns:1fr;gap:var(--s-5)}}
+
+/* index rail */
+.rail{position:sticky;top:var(--s-6);align-self:start;font-size:var(--step--1)}
+@media (max-width:820px){.rail{position:static}}
+.rail p{color:var(--text-muted);margin:0 0 var(--s-3);letter-spacing:.02em}
+.rail ol{list-style:none;margin:0;padding:0;counter-reset:i}
+.rail li{counter-increment:i;border-top:var(--border-hair) solid var(--line-hair)}
+.rail a{display:flex;gap:var(--s-3);padding:var(--s-2) 0;color:var(--text-secondary);
+  text-decoration:none}
+.rail a::before{content:counter(i,decimal-leading-zero);color:var(--n-300)}
+.rail a:hover{color:var(--state-live)}
+.rail a:hover::before{color:var(--state-live)}
+
+h1,h2,h3,h4{font-family:var(--font-display);color:var(--text-primary);margin:0}
+h1{font-size:var(--step-5);font-weight:800;line-height:var(--lh-tight);
+  letter-spacing:-.035em}
+h2{font-size:var(--step-4);font-weight:700;line-height:1.1;
+  letter-spacing:-.025em}
+h3{font-size:var(--step-2);font-weight:600;line-height:1.2;letter-spacing:-.015em;
+  margin-bottom:var(--s-2)}
+h4{font-family:var(--font-ui);font-size:var(--step-0);font-weight:650;
+  color:var(--text-secondary)}
+p{margin:0 0 var(--s-4);max-width:var(--measure)}
+code{font-family:var(--font-ui);font-weight:550;font-size:.92em;color:var(--gold-300)}
+strong{color:var(--text-primary);font-weight:650}
+a{color:var(--gold-300)}
+:focus-visible{outline:2px solid var(--focus-ring);outline-offset:3px}
+
+header.masthead{border-bottom:var(--border-frame) solid var(--state-live);
+  padding-bottom:var(--s-5);margin-bottom:var(--s-6)}
+.masthead .sub{font-size:var(--step-1);color:var(--text-muted);max-width:var(--measure);
+  margin-top:var(--s-3)}
+.version{display:flex;gap:var(--s-4);font-size:var(--step--1);color:var(--n-300);
+  margin-top:var(--s-4)}
+
+section{padding-top:var(--s-7);scroll-margin-top:var(--s-4)}
+section > h2{padding-bottom:var(--s-3);border-bottom:var(--border-hair) solid var(--line-strong);
+  margin-bottom:var(--s-5)}
+.lead{font-size:var(--step-1);color:var(--text-secondary)}
+.note{border-left:var(--border-frame) solid var(--gold-700);padding:var(--s-2) 0 var(--s-2) var(--s-4);
+  margin:var(--s-5) 0;font-size:var(--step-0);color:var(--text-muted);max-width:var(--measure)}
+.note strong{color:var(--gold-300)}
+
+/* hero: the colour law */
+.law{display:grid;grid-template-columns:repeat(3,1fr);gap:var(--s-4);margin:var(--s-6) 0}
+@media (max-width:700px){.law{grid-template-columns:1fr}}
+.law-card{background:var(--surface-raised);border:var(--border-hair) solid var(--line-hair);
+  padding:var(--s-5);border-radius:var(--r-panel)}
+.lens{width:84px;height:84px;border-radius:var(--r-pill);border:6px solid currentColor;
+  display:grid;place-items:center;margin-bottom:var(--s-4)}
+.lens i{width:26px;height:26px;border-radius:var(--r-pill);background:currentColor;
+  display:block;font-style:normal}
+.law-card h4{margin-bottom:var(--s-1);font-size:var(--step-1)}
+.law-card p{font-size:var(--step--1);color:var(--text-muted);margin:0}
+.c-live{color:var(--state-live)} .c-standby{color:var(--state-standby)}
+.c-offair{color:var(--state-offair)}
+.law-card.is-live .lens i{animation:breathe var(--pulse-cycle) var(--ease-out) infinite}
+@keyframes breathe{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(.72);opacity:.55}}
+
+/* swatches */
+.ramp{display:grid;grid-template-columns:repeat(11,1fr);margin:0 0 var(--s-2);
+  border-radius:var(--r-panel);overflow:hidden}
+@media (max-width:700px){.ramp{grid-template-columns:repeat(4,1fr)}}
+.sw{padding:var(--s-4) var(--s-2) var(--s-2);min-height:78px;font-size:10px;line-height:1.3}
+.sw b{display:block;font-weight:650}
+.sw span{opacity:.72}
+.ramp-label{display:flex;justify-content:space-between;align-items:baseline;
+  margin:var(--s-5) 0 var(--s-2)}
+.ramp-label em{font-style:normal;font-size:var(--step--1);color:var(--text-muted)}
+
+/* tables */
+table{width:100%;border-collapse:collapse;font-size:var(--step--1);margin-bottom:var(--s-4)}
+th{text-align:left;font-weight:650;color:var(--text-muted);padding:var(--s-2) var(--s-3);
+  border-bottom:var(--border-hair) solid var(--line-strong)}
+td{padding:var(--s-2) var(--s-3);border-bottom:var(--border-hair) solid var(--line-hair);
+  vertical-align:middle}
+td:first-child{color:var(--text-primary)}
+.pass{color:#5ddba0}.warn{color:var(--gold-300)}.fail{color:var(--state-error)}
+.chip{display:inline-block;padding:2px 8px;border-radius:var(--r-panel);font-size:11px;
+  font-weight:650}
+
+/* type specimens */
+.spec{border-top:var(--border-hair) solid var(--line-hair);padding:var(--s-4) 0;
+  display:grid;grid-template-columns:140px minmax(0,1fr);gap:var(--s-4)}
+@media (max-width:700px){.spec{grid-template-columns:1fr;gap:var(--s-2)}}
+.spec dt{font-size:var(--step--1);color:var(--text-muted)}
+.narration{font-family:var(--font-narration);font-size:var(--step-2);font-style:italic;
+  font-weight:350;line-height:var(--lh-prose);color:var(--text-primary);max-width:54ch}
+
+/* component demo frames */
+.demo{background:var(--surface-sunken);border:var(--border-hair) solid var(--line-hair);
+  border-radius:var(--r-panel);padding:var(--s-5);margin:var(--s-3) 0 var(--s-5);
+  display:flex;flex-wrap:wrap;gap:var(--s-4);align-items:center}
+.demo.stack{flex-direction:column;align-items:stretch}
+.demo.on-brand{background:var(--brand-bg);border-color:var(--purple-300)}
+
+/* --- APP COMPONENTS (production patterns) --- */
+.badge{display:inline-flex;align-items:center;gap:var(--s-2);padding:4px 12px 4px 9px;
+  border-radius:var(--r-pill);font-size:var(--step--1);font-weight:700;
+  letter-spacing:.06em;text-transform:uppercase}
+.badge i{width:8px;height:8px;border-radius:var(--r-pill);background:currentColor;
+  font-style:normal}
+.badge--live{background:var(--state-live);color:var(--state-live-ink)}
+.badge--live i{animation:breathe var(--pulse-cycle) var(--ease-out) infinite}
+.badge--standby{background:transparent;color:var(--state-standby);
+  box-shadow:inset 0 0 0 1px var(--line-strong)}
+.badge--offair{background:transparent;color:var(--state-offair);
+  box-shadow:inset 0 0 0 1px var(--purple-300)}
+
+.btn{font:inherit;font-weight:650;border:0;cursor:pointer;padding:10px var(--s-5);
+  border-radius:var(--r-panel);transition:background var(--t-quick) var(--ease-out),
+  color var(--t-quick) var(--ease-out)}
+.btn--primary{background:var(--state-live);color:var(--state-live-ink)}
+.btn--primary:hover{background:var(--gold-300)}
+.btn--secondary{background:transparent;color:var(--text-primary);
+  box-shadow:inset 0 0 0 1px var(--line-strong)}
+.btn--secondary:hover{box-shadow:inset 0 0 0 1px var(--n-200)}
+.btn--ghost{background:transparent;color:var(--text-muted);padding-left:0;padding-right:0}
+.btn--ghost:hover{color:var(--text-primary)}
+.btn--transport{border-radius:var(--r-pill);width:52px;height:52px;padding:0;
+  display:grid;place-items:center;background:var(--state-live);color:var(--state-live-ink)}
+.btn--transport svg{width:20px;height:20px;fill:currentColor}
+.btn[disabled]{opacity:.4;cursor:not-allowed}
+
+.field{display:grid;gap:var(--s-2);max-width:340px}
+.field label{font-size:var(--step--1);color:var(--text-muted)}
+.field input{font:inherit;background:var(--surface-base);color:var(--text-primary);
+  border:var(--border-hair) solid var(--line-strong);border-radius:var(--r-panel);
+  padding:9px var(--s-3)}
+.field input:focus{border-color:var(--state-live);outline:2px solid var(--focus-ring);
+  outline-offset:2px}
+.field .hint{font-size:var(--step--1);color:var(--n-300)}
+
+.styles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+  gap:var(--s-3);width:100%}
+.style-opt{background:var(--surface-raised);border:var(--border-hair) solid var(--line-hair);
+  border-radius:var(--r-panel);padding:var(--s-4);cursor:pointer;text-align:left;
+  color:var(--text-secondary);font:inherit;
+  transition:border-color var(--t-quick) var(--ease-out)}
+.style-opt:hover{border-color:var(--n-300)}
+.style-opt[aria-pressed="true"]{border-color:var(--state-live);
+  box-shadow:inset 0 0 0 1px var(--state-live)}
+.style-opt b{display:block;color:var(--text-primary);font-family:var(--font-ui);
+  font-size:var(--step-1);font-weight:650;margin-bottom:2px}
+.style-opt span{font-size:var(--step--1);color:var(--text-muted)}
+
+.viewfinder{position:relative;width:100%;aspect-ratio:16/9;background:var(--surface-frame);
+  border:var(--border-frame) solid var(--state-live);border-radius:var(--r-frame);
+  display:grid;place-items:end start;padding:var(--s-4);overflow:hidden}
+.viewfinder::before{content:"";position:absolute;inset:var(--s-3);
+  border:var(--border-hair) solid rgba(255,143,28,.28)}
+.viewfinder .tc{position:absolute;top:var(--s-4);right:var(--s-4);
+  font-size:var(--step--1);color:var(--gold-200);letter-spacing:.06em}
+.viewfinder .line{font-family:var(--font-narration);font-style:italic;font-weight:350;
+  font-size:var(--step-2);line-height:var(--lh-prose);color:var(--n-050);max-width:48ch;
+  position:relative}
+
+.transcript{width:100%;display:grid;gap:var(--s-4)}
+.t-row{display:grid;grid-template-columns:64px minmax(0,1fr);gap:var(--s-4);
+  padding-bottom:var(--s-4);border-bottom:var(--border-hair) solid var(--line-hair)}
+.t-row time{font-size:var(--step--1);color:var(--n-300);padding-top:6px}
+.t-row p{font-family:var(--font-narration);font-size:var(--step-1);font-style:italic;
+  font-weight:350;line-height:var(--lh-prose);color:var(--text-primary);margin:0}
+.t-row.is-current p{color:var(--gold-200)}
+
+.episode{width:280px;background:var(--surface-raised);border-radius:var(--r-panel);
+  overflow:hidden;border:var(--border-hair) solid var(--line-hair)}
+.episode .still{aspect-ratio:16/9;background:
+  linear-gradient(135deg,var(--purple-700),var(--n-800));display:grid;place-items:center}
+.episode .still span{font-family:var(--font-display);font-weight:800;
+  font-size:var(--step-3);color:var(--purple-300)}
+.episode .meta{padding:var(--s-4)}
+.episode .meta b{display:block;font-family:var(--font-ui);font-size:var(--step-1);
+  font-weight:650;color:var(--text-primary);margin-bottom:var(--s-1)}
+.episode .meta span{font-size:var(--step--1);color:var(--text-muted)}
+
+.toast{width:100%;max-width:460px;display:flex;gap:var(--s-3);padding:var(--s-4);
+  background:var(--surface-raised);border-left:var(--border-frame) solid var(--state-error);
+  border-radius:var(--r-panel)}
+.toast b{display:block;color:var(--text-primary);font-weight:650;margin-bottom:2px}
+.toast p{margin:0;font-size:var(--step--1);color:var(--text-muted)}
+
+.empty{width:100%;text-align:center;padding:var(--s-7) var(--s-4)}
+.empty b{display:block;font-family:var(--font-display);font-size:var(--step-2);
+  font-weight:600;color:var(--text-primary);margin-bottom:var(--s-2)}
+.empty p{margin:0 auto var(--s-4);color:var(--text-muted);max-width:36ch}
+
+.brandblock{padding:var(--s-6);border-radius:var(--r-panel);background:var(--brand-bg)}
+.brandblock h3{color:var(--brand-ink);font-size:var(--step-3);
+  font-weight:800;letter-spacing:-.025em}
+.brandblock p{color:var(--brand-ink-soft);margin-bottom:var(--s-4)}
+.brandblock .btn--primary{background:var(--brand-accent);color:var(--purple-800)}
+
+.dos{display:grid;grid-template-columns:1fr 1fr;gap:var(--s-4)}
+@media (max-width:700px){.dos{grid-template-columns:1fr}}
+.do,.dont{padding:var(--s-4);border-radius:var(--r-panel);font-size:var(--step--1)}
+.do{background:rgba(93,219,160,.07);border:var(--border-hair) solid rgba(93,219,160,.35)}
+.dont{background:rgba(255,90,77,.07);border:var(--border-hair) solid rgba(255,90,77,.35)}
+.do h4{color:#5ddba0;margin-bottom:var(--s-2)}
+.dont h4{color:var(--state-error);margin-bottom:var(--s-2)}
+.do ul,.dont ul{margin:0;padding-left:var(--s-4);color:var(--text-muted)}
+.do li,.dont li{margin-bottom:var(--s-2)}
+
+footer{margin-top:var(--s-9);padding-top:var(--s-5);
+  border-top:var(--border-hair) solid var(--line-hair);font-size:var(--step--1);
+  color:var(--n-300)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<nav class="rail" aria-label="Contents">
+  <p>MCgEe DS v1.0</p>
+  <ol>
+    <li><a href="#law">Colour law</a></li>
+    <li><a href="#palette">Palette</a></li>
+    <li><a href="#contrast">Contrast</a></li>
+    <li><a href="#type">Type</a></li>
+    <li><a href="#shape">Shape &amp; space</a></li>
+    <li><a href="#motion">Motion</a></li>
+    <li><a href="#components">Components</a></li>
+    <li><a href="#voice">Voice</a></li>
+    <li><a href="#logo">Logo</a></li>
+  </ol>
+</nav>
+
+<main>
+<header class="masthead">
+  <h1>MCgEe Design System</h1>
+  <p class="sub">Three colours, one law: purple is who the product is, dark grey is where the work happens, gold means the narrator is speaking. Nothing else may wear gold.</p>
+  <div class="version">
+    <span>Version 1.0</span>
+    <span>#ff8f1c · #4f2370 · #1e1e1e</span>
+  </div>
+</header>
+
+<!-- 1 ------------------------------------------------------ -->
+<section id="law">
+  <h2>The colour law</h2>
+  <p class="lead">MCgEe watches and speaks. The palette encodes that: a user must be able to tell, from across the room and with the audio muted, whether the engine is capturing them. Gold is therefore a state, not a decoration.</p>
+
+  <div class="law">
+    <div class="law-card is-live">
+      <div class="lens c-live"><i></i></div>
+      <h4>Live</h4>
+      <p>Capturing frames and narrating. Gold #ff8f1c, breathing pulse on the 4s cadence. The only condition in which gold appears in the interface.</p>
+    </div>
+    <div class="law-card">
+      <div class="lens c-standby"><i></i></div>
+      <h4>Standby</h4>
+      <p>Devices armed, nothing captured, nothing sent. Neutral #a3a3a3. Static.</p>
+    </div>
+    <div class="law-card">
+      <div class="lens c-offair"><i></i></div>
+      <h4>Off air</h4>
+      <p>Idle or disconnected. Purple #724f8d. This is also the brand's resting state everywhere outside the app.</p>
+    </div>
+  </div>
+
+  <div class="note"><strong>Hard rule.</strong> Gold is reserved for the live pipeline and the single primary action that starts it. It is not used for links, headings, decorative gradients, or hover states on unrelated controls. If gold appears while nothing is being captured, the interface is lying about privacy.</div>
+</section>
+
+<!-- 2 ------------------------------------------------------ -->
+<section id="palette">
+  <h2>Palette</h2>
+  <p>Each brand colour is extended into an 8–11 step ramp so the system never needs a fourth hue. The 500 step is the supplied brand value and is never redefined.</p>
+
+  <div class="ramp-label"><h3>Gold — signal</h3><em>500 = #ff8f1c</em></div>
+  <div class="ramp">
+    <div class="sw" style="background:#fff2e4;color:#472808"><b>050</b><span>fff2e4</span></div>
+    <div class="sw" style="background:#ffddbb;color:#472808"><b>100</b><span>ffddbb</span></div>
+    <div class="sw" style="background:#ffc182;color:#472808"><b>200</b><span>ffc182</span></div>
+    <div class="sw" style="background:#ffa549;color:#472808"><b>300</b><span>ffa549</span></div>
+    <div class="sw" style="background:#ff8f1c;color:#1e1e1e;grid-column:span 3"><b>500 · brand</b><span>ff8f1c</span></div>
+    <div class="sw" style="background:#bf6b15;color:#fff2e4"><b>700</b><span>bf6b15</span></div>
+    <div class="sw" style="background:#80480e;color:#fff2e4"><b>800</b><span>80480e</span></div>
+    <div class="sw" style="background:#472808;color:#ffc182;grid-column:span 2"><b>900</b><span>472808</span></div>
+  </div>
+  <p style="font-size:var(--step--1);color:var(--text-muted)">300 is the hover/active tint. 100 is the focus ring. 700–900 are for gold-on-gold dividers and pressed states only — never for text.</p>
+
+  <div class="ramp-label"><h3>Purple — identity</h3><em>500 = #4f2370</em></div>
+  <div class="ramp">
+    <div class="sw" style="background:#eae5ee;color:#281238"><b>050</b><span>eae5ee</span></div>
+    <div class="sw" style="background:#cabdd4;color:#281238"><b>100</b><span>cabdd4</span></div>
+    <div class="sw" style="background:#9e86b0;color:#160a1f"><b>200</b><span>9e86b0</span></div>
+    <div class="sw" style="background:#724f8d;color:#eae5ee"><b>300</b><span>724f8d</span></div>
+    <div class="sw" style="background:#4f2370;color:#ffffff;grid-column:span 3"><b>500 · brand</b><span>4f2370</span></div>
+    <div class="sw" style="background:#3b1a54;color:#cabdd4"><b>700</b><span>3b1a54</span></div>
+    <div class="sw" style="background:#281238;color:#cabdd4"><b>800</b><span>281238</span></div>
+    <div class="sw" style="background:#160a1f;color:#9e86b0;grid-column:span 2"><b>900</b><span>160a1f</span></div>
+  </div>
+
+  <div class="ramp-label"><h3>Neutral — capture chrome</h3><em>700 = #1e1e1e</em></div>
+  <div class="ramp">
+    <div class="sw" style="background:#ffffff;color:#1e1e1e"><b>000</b><span>ffffff</span></div>
+    <div class="sw" style="background:#e8e8e8;color:#1e1e1e"><b>050</b><span>e8e8e8</span></div>
+    <div class="sw" style="background:#c9c9c9;color:#1e1e1e"><b>100</b><span>c9c9c9</span></div>
+    <div class="sw" style="background:#a3a3a3;color:#1e1e1e"><b>200</b><span>a3a3a3</span></div>
+    <div class="sw" style="background:#6b6b6b;color:#e8e8e8"><b>300</b><span>6b6b6b</span></div>
+    <div class="sw" style="background:#3b3b3b;color:#c9c9c9"><b>400</b><span>3b3b3b</span></div>
+    <div class="sw" style="background:#2c2c2c;color:#c9c9c9"><b>500</b><span>2c2c2c</span></div>
+    <div class="sw" style="background:#262626;color:#c9c9c9"><b>600</b><span>262626</span></div>
+    <div class="sw" style="background:#1e1e1e;color:#e8e8e8;box-shadow:inset 0 0 0 1px #3b3b3b;grid-column:span 2"><b>700 · brand</b><span>1e1e1e</span></div>
+    <div class="sw" style="background:#0f0f0f;color:#a3a3a3"><b>900</b><span>0f0f0f</span></div>
+  </div>
+
+  <h3 style="margin-top:var(--s-6)">Surface assignment</h3>
+  <table>
+    <thead><tr><th>Context</th><th>Background</th><th>Body text</th><th>Accent</th></tr></thead>
+    <tbody>
+      <tr><td>App: capture, transcript, settings</td><td>#1e1e1e</td><td>#e8e8e8</td><td>gold (live only)</td></tr>
+      <tr><td>App: panels, cards, list rows</td><td>#262626</td><td>#c9c9c9</td><td>gold (live only)</td></tr>
+      <tr><td>App: video frame, code-adjacent</td><td>#161616</td><td>#e8e8e8</td><td>gold border when live</td></tr>
+      <tr><td>Marketing, onboarding, pricing</td><td>#4f2370</td><td>#ffffff</td><td>#ff8f1c</td></tr>
+      <tr><td>Marketing: deep sections, footer</td><td>#3b1a54</td><td>#cabdd4</td><td>#ff8f1c</td></tr>
+      <tr><td>Documents, invoices, email</td><td>#ffffff</td><td>#1e1e1e</td><td>#4f2370</td></tr>
+    </tbody>
+  </table>
+  <div class="note"><strong>Never</strong> place purple #4f2370 and dark grey #1e1e1e in direct foreground/background contact. Their contrast ratio is 1.43:1 — effectively invisible. They coexist only as separate zones with a light or gold border between them.</div>
+</section>
+
+<!-- 3 ------------------------------------------------------ -->
+<section id="contrast">
+  <h2>Contrast, measured</h2>
+  <p>Every ratio below is computed under WCAG 2.1 relative luminance. AA needs 4.5:1 for body text, 3:1 for large text (24px+ or 19px bold) and UI boundaries.</p>
+  <table>
+    <thead><tr><th>Foreground</th><th>Background</th><th>Ratio</th><th>Verdict</th><th>Use for</th></tr></thead>
+    <tbody>
+      <tr><td>#e8e8e8</td><td>#1e1e1e</td><td>13.61:1</td><td class="pass">AAA</td><td>Primary app text</td></tr>
+      <tr><td>#a3a3a3</td><td>#1e1e1e</td><td>6.61:1</td><td class="pass">AAA</td><td>Muted labels, timecode</td></tr>
+      <tr><td>#ff8f1c</td><td>#1e1e1e</td><td>7.30:1</td><td class="pass">AAA</td><td>Live text and icons</td></tr>
+      <tr><td>#1e1e1e</td><td>#ff8f1c</td><td>7.30:1</td><td class="pass">AAA</td><td>Text on gold buttons</td></tr>
+      <tr><td>#ffffff</td><td>#4f2370</td><td>11.62:1</td><td class="pass">AAA</td><td>Marketing headlines and body</td></tr>
+      <tr><td>#ff8f1c</td><td>#4f2370</td><td>5.09:1</td><td class="warn">AA only</td><td>Accents ≥16px. Not for 12–14px text</td></tr>
+      <tr><td>#4f2370</td><td>#ff8f1c</td><td>5.09:1</td><td class="warn">AA only</td><td>Logo lockup, large type on gold</td></tr>
+      <tr><td>#9e86b0</td><td>#4f2370</td><td>3.59:1</td><td class="warn">Large only</td><td>Dividers, disabled states</td></tr>
+      <tr><td>#ffffff</td><td>#ff8f1c</td><td>2.28:1</td><td class="fail">Fails</td><td>Prohibited. No white on gold, at any size</td></tr>
+      <tr><td>#4f2370</td><td>#1e1e1e</td><td>1.43:1</td><td class="fail">Fails</td><td>Prohibited in any foreground pairing</td></tr>
+    </tbody>
+  </table>
+  <div class="note"><strong>Consequence for the logo.</strong> The white-background lockup must keep the wordmark in purple, not gold — gold on white is 2.28:1. Gold may only carry the binocular body in that lockup, as a shape, never as text.</div>
+</section>
+
+<!-- 4 ------------------------------------------------------ -->
+<section id="type">
+  <h2>Type</h2>
+  <p class="lead">Three faces, three jobs. The split is not stylistic: the wordmark, the interface and the generated narration are three different speakers, and one of them reads out numbers that change every four seconds. Poppins is the logo face, confirmed in the source file, and it leads the system — but it does not run the interface.</p>
+
+  <dl class="spec">
+    <dt>Display · Poppins 600–800<br>Logo-adjacent. 20px and above only.</dt>
+    <dd><div style="font-family:var(--font-display);font-weight:800;font-size:var(--step-4);line-height:1.05;letter-spacing:-.03em;color:var(--text-primary)">Start episode</div></dd>
+  </dl>
+  <dl class="spec">
+    <dt>UI · Archivo 400–650<br>Every control, label, table and figure.</dt>
+    <dd><div style="font-size:var(--step-1)">Narrator style · Latency 1.4s · 00:04:12 captured</div></dd>
+  </dl>
+  <dl class="spec">
+    <dt>Narration · Newsreader 350 italic<br>Generated script, transcript, captions.</dt>
+    <dd><p class="narration" style="margin:0">He opens his code editor, hesitates on line 42, then commits to a refactor that will change everything.</p></dd>
+  </dl>
+
+  <div class="note"><strong>Why Poppins does not run the interface.</strong> Poppins has no tabular-figure feature. Timecode, latency and duration readouts update every few seconds, and proportional digits make them shift horizontally on every update — a live instrument that visibly twitches. Poppins also pairs a small x-height with wide circular forms, which loses density at 12–14px in an app that sits beside a code editor. Archivo carries real tabular figures and squarish narrow forms, and it is the same class of grotesque as the logo tagline. Poppins is the brand's voice; Archivo is its instrument panel.</div>
+
+  <h3 style="margin-top:var(--s-6)">Scale</h3>
+  <table>
+    <thead><tr><th>Token</th><th>Size</th><th>Line height</th><th>Face</th><th>Role</th></tr></thead>
+    <tbody>
+      <tr><td>--step-5</td><td>49px</td><td>1.04</td><td>Poppins 800</td><td>Marketing display, one per view</td></tr>
+      <tr><td>--step-4</td><td>31px</td><td>1.1</td><td>Poppins 700</td><td>Section heads, modal titles</td></tr>
+      <tr><td>--step-3</td><td>25px</td><td>1.2</td><td>Poppins 600</td><td>Sub-heads, hero sub-copy</td></tr>
+      <tr><td>--step-2</td><td>20px</td><td>1.55</td><td>Newsreader italic</td><td>Live narration line</td></tr>
+      <tr><td>--step-1</td><td>16px</td><td>1.55</td><td>Archivo / Newsreader</td><td>Body / transcript</td></tr>
+      <tr><td>--step-0</td><td>14px</td><td>1.35</td><td>Archivo</td><td>UI default, episode titles</td></tr>
+      <tr><td>--step--1</td><td>12px</td><td>1.35</td><td>Archivo</td><td>Timecode, meta, badges</td></tr>
+    </tbody>
+  </table>
+  <p style="font-size:var(--step--1);color:var(--text-muted)">Poppins runs tight: −.035em at 49px, −.025em at 31px, −.015em at 25px. Untracked Poppins at display size reads as a default template.</p>
+
+  <div class="dos">
+    <div class="do"><h4>Do</h4><ul>
+      <li>Set <code>font-variant-numeric: tabular-nums</code> globally on the UI face so every readout is fixed-width.</li>
+      <li>Cap prose at 62 characters; cap narration at 48, so one spoken line fits one visual breath.</li>
+      <li>Keep Poppins above 20px. Below that it is a liability, not a brand asset.</li>
+    </ul></div>
+    <div class="dont"><h4>Don't</h4><ul>
+      <li>No Poppins in tables, forms, timecode or any figure that updates.</li>
+      <li>No uppercase form labels. Uppercase exists only in on-air badges (LIVE, REC, STANDBY) and the logo tagline.</li>
+      <li>No monospace for data. Tabular Archivo does the job without the terminal cosplay.</li>
+      <li>Don't set narration in either sans. The serif italic is how users tell the machine's voice from the machine's controls.</li>
+    </ul></div>
+  </div>
+</section>
+
+<!-- 5 ------------------------------------------------------ -->
+<section id="shape">
+  <h2>Shape &amp; space</h2>
+  <p>The logo is built from two circles inside two trapezoids: lenses and bodies. The system inherits that split — round means state or transport, square means capture.</p>
+  <table>
+    <thead><tr><th>Radius</th><th>Value</th><th>Applied to</th></tr></thead>
+    <tbody>
+      <tr><td>--r-frame</td><td>0</td><td>Viewfinder, screen preview, recorded still. Capture surfaces have hard corners; they are what the camera sees.</td></tr>
+      <tr><td>--r-panel</td><td>3px</td><td>Panels, cards, inputs, standard buttons.</td></tr>
+      <tr><td>--r-pill</td><td>999px</td><td>State badges, transport controls, device toggles. Anything round is pressable or alive.</td></tr>
+    </tbody>
+  </table>
+  <p>Borders carry information, not decoration: <code>1px #2c2c2c</code> separates content of equal weight; <code>2px</code> appears only where the live pipeline is active, and then in gold. Elevation is expressed by surface lightening (#1e1e1e → #262626), never by shadow — the app sits over video and dark shadows disappear.</p>
+  <p>Space runs on a 4px base: <code>4 · 8 · 12 · 16 · 24 · 32 · 48 · 64 · 96</code>. Section rhythm is 48px inside the app, 96px in marketing.</p>
+</section>
+
+<!-- 6 ------------------------------------------------------ -->
+<section id="motion">
+  <h2>Motion</h2>
+  <p>One orchestrated moment, tied to the machine's actual behaviour. MCgEe captures every 3–5 seconds; the live indicator breathes on a 4-second cycle so the pulse is a truthful readout of cadence, not ambience.</p>
+  <table>
+    <thead><tr><th>Token</th><th>Duration</th><th>Applied to</th></tr></thead>
+    <tbody>
+      <tr><td>--t-instant</td><td>90ms</td><td>Press feedback, toggles</td></tr>
+      <tr><td>--t-quick</td><td>160ms</td><td>Hover, focus, colour changes</td></tr>
+      <tr><td>--t-considered</td><td>280ms</td><td>Panel open, narration line entering</td></tr>
+      <tr><td>--pulse-cycle</td><td>4s</td><td>Live indicator only</td></tr>
+    </tbody>
+  </table>
+  <p>Nothing else animates on load. New narration lines fade in over 280ms and hold; they never slide, and the transcript does not auto-scroll past the current line without the user's action. <code>prefers-reduced-motion</code> replaces the pulse with a static gold dot and disables all transitions — the state stays legible without movement.</p>
+</section>
+
+<!-- 7 ------------------------------------------------------ -->
+<section id="components">
+  <h2>Components</h2>
+
+  <h3>State badges</h3>
+  <div class="demo">
+    <span class="badge badge--live"><i></i>Live</span>
+    <span class="badge badge--standby"><i></i>Standby</span>
+    <span class="badge badge--offair"><i></i>Off air</span>
+  </div>
+
+  <h3>Buttons</h3>
+  <div class="demo">
+    <button class="btn btn--primary">Start episode</button>
+    <button class="btn btn--secondary">Choose devices</button>
+    <button class="btn btn--ghost">Skip for now</button>
+    <button class="btn btn--primary" disabled>Start episode</button>
+    <button class="btn btn--transport" aria-label="Stop episode">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
+    </button>
+  </div>
+  <p style="font-size:var(--step--1);color:var(--text-muted)">One gold button per screen. If a second primary action seems necessary, the screen is asking two questions and should be split.</p>
+
+  <h3>Viewfinder, live</h3>
+  <div class="demo">
+    <div class="viewfinder">
+      <span class="tc">00:04:12 · 1.4s</span>
+      <p class="line">She scrolls through design mockups, eyes narrowing. This is the moment the brand finally clicks.</p>
+    </div>
+  </div>
+
+  <h3>Narrator style</h3>
+  <div class="demo stack">
+    <div class="styles">
+      <button class="style-opt" aria-pressed="true"><b>Cinematic</b><span>Slow, weighted, third person</span></button>
+      <button class="style-opt" aria-pressed="false"><b>Chill</b><span>Warm, close, unhurried</span></button>
+      <button class="style-opt" aria-pressed="false"><b>Hype</b><span>Fast, loud, present tense</span></button>
+      <button class="style-opt" aria-pressed="false"><b>Sports desk</b><span>Play-by-play, high energy</span></button>
+    </div>
+  </div>
+
+  <h3>Transcript</h3>
+  <div class="demo stack">
+    <div class="transcript">
+      <div class="t-row is-current"><time>04:12</time><p>She scrolls through design mockups, eyes narrowing.</p></div>
+      <div class="t-row"><time>04:04</time><p>The second monitor fills with type specimens, each rejected faster than the last.</p></div>
+      <div class="t-row" style="border-bottom:0"><time>03:56</time><p>He returns to the terminal, where the build has been waiting patiently for eleven minutes.</p></div>
+    </div>
+  </div>
+
+  <h3>Episode card</h3>
+  <div class="demo">
+    <article class="episode">
+      <div class="still"><span>MC</span></div>
+      <div class="meta">
+        <b>Refactor night</b>
+        <span>12 Sep · 48 min · Cinematic</span>
+      </div>
+    </article>
+  </div>
+
+  <h3>Input</h3>
+  <div class="demo">
+    <div class="field">
+      <label for="ep">Episode name</label>
+      <input id="ep" type="text" value="Refactor night">
+      <span class="hint">Used for the recording file and the shareable link.</span>
+    </div>
+  </div>
+
+  <h3>Error and empty states</h3>
+  <div class="demo stack">
+    <div class="toast">
+      <div>
+        <b>Webcam is in use by another app</b>
+        <p>Close the other app, or switch MCgEe to screen capture only in Devices.</p>
+      </div>
+    </div>
+    <div class="empty">
+      <b>No episodes yet</b>
+      <p>Pick a narrator, connect a camera or screen, and MCgEe starts telling it back to you.</p>
+      <button class="btn btn--primary">Start your first episode</button>
+    </div>
+  </div>
+
+  <h3>Brand surface (marketing, onboarding)</h3>
+  <div class="demo on-brand">
+    <div class="brandblock" style="padding:0;background:transparent">
+      <h3>Your work, narrated as it happens</h3>
+      <p>MCgEe watches your screen and camera, writes a line, and speaks it — about once every four seconds.</p>
+      <button class="btn btn--primary">Download for macOS</button>
+    </div>
+  </div>
+</section>
+
+<!-- 8 ------------------------------------------------------ -->
+<section id="voice">
+  <h2>Voice</h2>
+  <p><strong>Interface voice:</strong> plain, present tense, sentence case, and literal about capture. The interface never dramatises; the narrator does that. Actions keep their name end to end — "Start episode" produces "Episode started" and "Stop episode".</p>
+  <p><strong>Narrator voice:</strong> third person, cinematic, 1–2 sentences, never explanatory. It describes what is visible and does not claim to know intent.</p>
+  <div class="dos">
+    <div class="do"><h4>Interface says</h4><ul>
+      <li>"Capturing screen and camera."</li>
+      <li>"Narration is muted. Capture continues."</li>
+      <li>"Webcam is in use by another app."</li>
+    </ul></div>
+    <div class="dont"><h4>Interface never says</h4><ul>
+      <li>"Oops! Something went wrong."</li>
+      <li>"Unleash your main character energy."</li>
+      <li>"Your story is being magically crafted…"</li>
+    </ul></div>
+  </div>
+  <div class="note"><strong>Privacy is a voice requirement.</strong> Any copy about capture states plainly what is being recorded, where it is processed, and how to stop it. This is the one place where the product is allowed to be boring.</div>
+</section>
+
+<!-- 9 ------------------------------------------------------ -->
+<section id="logo">
+  <h2>Logo</h2>
+  <p>The wordmark is <strong>Poppins</strong>, confirmed in the Canva source (set at 431px). The exported SVG and PNG are fully outlined — 58 paths, no text nodes — so the lockup is treated as a fixed asset and never re-set in live type. The tagline is a separate text element and renders considerably narrower and more squared than Poppins caps; confirm its face in Canva before it is reproduced anywhere outside the lockup.</p>
+  <p>Two lockups exist and they are not interchangeable.</p>
+  <table>
+    <thead><tr><th>Lockup</th><th>Construction</th><th>Use on</th></tr></thead>
+    <tbody>
+      <tr><td>Purple-ground</td><td>Gold wordmark with white outline, white binocular bodies, gold tagline</td><td>#4f2370 and #3b1a54 only</td></tr>
+      <tr><td>Light-ground</td><td>Purple wordmark, gold binocular bodies, #1e1e1e tagline</td><td>White and #e8e8e8 only</td></tr>
+      <tr><td>Dark-ground (to produce)</td><td>#e8e8e8 wordmark, gold binocular bodies, #a3a3a3 tagline</td><td>#1e1e1e app chrome</td></tr>
+    </tbody>
+  </table>
+  <div class="dos">
+    <div class="do"><h4>Do</h4><ul>
+      <li>Keep clear space equal to the height of the lowercase <em>g</em> bowl on all sides.</li>
+      <li>Drop the tagline below 180px of lockup width; the binoculars survive, the 12px caps do not.</li>
+      <li>Use the two lenses alone as the app icon and favicon.</li>
+    </ul></div>
+    <div class="dont"><h4>Don't</h4><ul>
+      <li>No gold wordmark on white or light grey — 2.28:1, illegible.</li>
+      <li>No purple wordmark on #1e1e1e — 1.43:1, invisible.</li>
+      <li>Don't place the lockup over live video or a screenshot; put it on a flat brand surface.</li>
+      <li>Don't animate the lenses in the logo. The pulse belongs to the live state, and reusing it dilutes the signal.</li>
+    </ul></div>
+  </div>
+</section>
+
+<footer>
+  MCgEe Design System v1.0 · Tokens in the <code>:root</code> block of this file are the source of truth · Contrast ratios computed under WCAG 2.1
+</footer>
+</main>
+</div>
+
+<script>
+document.querySelectorAll('.style-opt').forEach(function(btn){
+  btn.addEventListener('click',function(){
+    document.querySelectorAll('.style-opt').forEach(function(b){
+      b.setAttribute('aria-pressed','false');
+    });
+    btn.setAttribute('aria-pressed','true');
+  });
+});
+</script>
+</body>
+</html>

@@ -5,7 +5,7 @@ import 'package:http/http.dart' as http;
 import '../openai/openai_http_client.dart';
 
 /// Minimal OpenRouter client using its OpenAI-compatible endpoints.
-final class OpenRouterHttpClient implements OpenAiApi {
+final class OpenRouterHttpClient implements StreamingOpenAiApi {
   OpenRouterHttpClient({
     required String apiKey,
     http.Client? httpClient,
@@ -21,7 +21,12 @@ final class OpenRouterHttpClient implements OpenAiApi {
 
   @override
   Future<Map<String, Object?>> createResponse(Map<String, Object?> body) {
-    return _delegate.createResponse(body);
+    return _delegate.createResponse(_withLatencyRouting(body));
+  }
+
+  @override
+  Stream<Map<String, Object?>> createResponseStream(Map<String, Object?> body) {
+    return _delegate.createResponseStream(_withLatencyRouting(body));
   }
 
   @override
@@ -30,4 +35,16 @@ final class OpenRouterHttpClient implements OpenAiApi {
   }
 
   void close() => _delegate.close();
+}
+
+Map<String, Object?> _withLatencyRouting(Map<String, Object?> body) {
+  return {
+    ...body,
+    'provider': {
+      if (body['provider'] case final Map existingPreferences)
+        for (final entry in existingPreferences.entries)
+          entry.key.toString(): entry.value,
+      'sort': 'latency',
+    },
+  };
 }

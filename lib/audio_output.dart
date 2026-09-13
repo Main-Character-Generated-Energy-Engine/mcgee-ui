@@ -5,9 +5,9 @@ import 'package:narration_engine/narration_engine.dart';
 
 /// Flutter playback adapter for MP3 bytes returned by the engine.
 final class FlutterAudioOutput implements AudioOutput {
-  FlutterAudioOutput({AudioPlayer? player}) : _player = player ?? AudioPlayer();
+  FlutterAudioOutput({AudioPlayer? player}) : _player = player;
 
-  final AudioPlayer _player;
+  AudioPlayer? _player;
   StreamSubscription<void>? _completionSubscription;
   StreamSubscription<Duration>? _positionSubscription;
   StreamSubscription<Duration>? _durationSubscription;
@@ -15,6 +15,8 @@ final class FlutterAudioOutput implements AudioOutput {
   Completer<void>? _activeCompletion;
   Duration? _activeDuration;
   bool _disposed = false;
+
+  AudioPlayer get _audioPlayer => _player ??= AudioPlayer();
 
   @override
   Future<AudioPlayback> play(AudioTrack track) async {
@@ -30,7 +32,7 @@ final class FlutterAudioOutput implements AudioOutput {
     _activeCompletion = completion;
     _activeProgressController = progressController;
     _activeDuration = track.duration;
-    _completionSubscription = _player.onPlayerComplete.listen((_) {
+    _completionSubscription = _audioPlayer.onPlayerComplete.listen((_) {
       if (identical(_activeCompletion, completion)) {
         _activeCompletion = null;
         final subscription = _completionSubscription;
@@ -50,7 +52,7 @@ final class FlutterAudioOutput implements AudioOutput {
         ? BytesSource(bytes, mimeType: 'audio/mpeg')
         : DeviceFileSource(track.location!);
     try {
-      await _player.play(source);
+      await _audioPlayer.play(source);
     } catch (_) {
       await _completionSubscription?.cancel();
       _completionSubscription = null;
@@ -70,10 +72,10 @@ final class FlutterAudioOutput implements AudioOutput {
   }
 
   void _ensureProgressListeners() {
-    _durationSubscription ??= _player.onDurationChanged.listen((duration) {
+    _durationSubscription ??= _audioPlayer.onDurationChanged.listen((duration) {
       _activeDuration = duration;
     });
-    _positionSubscription ??= _player.onPositionChanged.listen((position) {
+    _positionSubscription ??= _audioPlayer.onPositionChanged.listen((position) {
       final controller = _activeProgressController;
       if (controller == null || controller.isClosed) return;
       controller.add(
@@ -91,7 +93,7 @@ final class FlutterAudioOutput implements AudioOutput {
     final progressController = _activeProgressController;
     _activeProgressController = null;
     _activeDuration = null;
-    await _player.stop();
+    await _player?.stop();
     await subscription?.cancel();
     await progressController?.close();
     if (completion != null && !completion.isCompleted) completion.complete();
@@ -103,6 +105,7 @@ final class FlutterAudioOutput implements AudioOutput {
     _disposed = true;
     await _positionSubscription?.cancel();
     await _durationSubscription?.cancel();
-    await _player.dispose();
+    await _player?.dispose();
+    _player = null;
   }
 }

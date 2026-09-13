@@ -15,10 +15,13 @@ final class NarrationEngine {
     required NarrationModel narrator,
     required SpeechSynthesizer speechSynthesizer,
     required AudioOutput audioOutput,
+    NarrationRenderer? narrationRenderer,
     NarrationPromptBuilder promptBuilder = const DocumentaryPromptBuilder(),
     NarrationPolicy policy = const NarrationPolicy(),
     NarrativeMemory? memory,
     Clock? clock,
+    Duration Function()? narrationPause,
+    Future<void> Function(Duration)? delay,
     this.maxCapturesPerObservation = 4,
     this.prefetchDuringPlayback = false,
     this.coalesceWhileBusy = false,
@@ -27,19 +30,25 @@ final class NarrationEngine {
        _narrator = narrator,
        _speechSynthesizer = speechSynthesizer,
        _audioOutput = audioOutput,
+       _narrationRenderer = narrationRenderer,
        _promptBuilder = promptBuilder,
        _policy = policy,
        _memory = memory ?? NarrativeMemory(),
-       _clock = clock ?? DateTime.now;
+       _clock = clock ?? DateTime.now,
+       _narrationPause = narrationPause ?? _noNarrationPause,
+       _delay = delay ?? Future<void>.delayed;
 
   final SceneInterpreter _sceneInterpreter;
   final NarrationModel _narrator;
   final SpeechSynthesizer _speechSynthesizer;
   final AudioOutput _audioOutput;
+  final NarrationRenderer? _narrationRenderer;
   final NarrationPromptBuilder _promptBuilder;
   final NarrationPolicy _policy;
   final NarrativeMemory _memory;
   final Clock _clock;
+  final Duration Function() _narrationPause;
+  final Future<void> Function(Duration) _delay;
   final int maxCapturesPerObservation;
 
   /// Allows one narration to be prepared while another is playing.
@@ -173,11 +182,43 @@ final class NarrationEngine {
         captures: window,
         memory: snapshot,
       );
-      final draft = await _narrator.narrate(request);
+      StreamingSpeechSynthesis? streamingSynthesis;
+      Future<_TrackResult>? streamingTrack;
+      AudioTrack? renderedTrack;
+      final NarrationDraft draft;
+      final renderer = _narrationRenderer;
+      if (renderer != null) {
+        final rendered = await renderer.render(request);
+        draft = rendered.draft;
+        renderedTrack = rendered.track;
+      } else if (_narrator case final StreamingNarrationModel streamingNarrator
+          when _speechSynthesizer is StreamingSpeechSynthesizer) {
+        final narrationStream = await streamingNarrator.narrateStream(request);
+        streamingSynthesis = await _speechSynthesizer.synthesizeStream(
+          narrationStream.textDeltas,
+        );
+        // Convert failures to values immediately so a fast TTS failure cannot
+        // become an unhandled asynchronous error while narration is finishing.
+        streamingTrack = streamingSynthesis.completed.then<_TrackResult>(
+          _TrackSuccess.new,
+          onError: (Object error, StackTrace stackTrace) =>
+              _TrackFailure(error, stackTrace),
+        );
+        try {
+          draft = await narrationStream.completed;
+        } catch (_) {
+          await streamingSynthesis.cancel();
+          rethrow;
+        }
+      } else {
+        draft = await _narrator.narrate(request);
+      }
       if (!_isCurrent(operationGeneration)) {
+        await streamingSynthesis?.cancel();
         return _skip(window, observedAt, 'The engine was stopped.');
       }
       if (!draft.shouldSpeak) {
+        await streamingSynthesis?.cancel();
         return _skip(
           window,
           observedAt,
@@ -188,15 +229,28 @@ final class NarrationEngine {
       final text = draft.text?.trim() ?? '';
       final draftReason = _policy.checkDraft(text, _memory.snapshot);
       if (draftReason != null) {
+        await streamingSynthesis?.cancel();
         return _skip(window, observedAt, draftReason.message);
       }
 
       final finalStaleness = _policy.checkStaleness(observedAt, _clock());
       if (finalStaleness != null) {
+        await streamingSynthesis?.cancel();
         return _skip(window, observedAt, finalStaleness.message);
       }
 
-      final track = await _speechSynthesizer.synthesize(text);
+      final AudioTrack track;
+      if (renderedTrack case final renderedTrack?) {
+        track = renderedTrack;
+      } else if (streamingTrack case final streamingTrack?) {
+        track = switch (await streamingTrack) {
+          _TrackSuccess(:final track) => track,
+          _TrackFailure(:final error, :final stackTrace) =>
+            Error.throwWithStackTrace(error, stackTrace),
+        };
+      } else {
+        track = await _speechSynthesizer.synthesize(text);
+      }
       if (!_isCurrent(operationGeneration)) {
         return _skip(window, observedAt, 'The engine was stopped.');
       }
@@ -335,6 +389,7 @@ final class NarrationEngine {
       }
 
       StreamSubscription<AudioPlaybackProgress>? playbackProgressSubscription;
+      var playedSuccessfully = false;
       try {
         final playback = await _audioOutput.play(narration.track);
         if (!_isCurrent(narration.generation)) {
@@ -406,6 +461,7 @@ final class NarrationEngine {
             ),
           );
         }
+        playedSuccessfully = true;
       } catch (error) {
         _isPlayingAudio = false;
         if (_isCurrent(narration.generation)) {
@@ -436,6 +492,10 @@ final class NarrationEngine {
         if (identical(_activeNarration, narration)) {
           _activeNarration = null;
         }
+      }
+      if (playedSuccessfully && !_closed) {
+        final pause = _narrationPause();
+        if (!pause.isNegative && pause > Duration.zero) await _delay(pause);
       }
     }
 
@@ -522,6 +582,8 @@ final class NarrationEngine {
   }
 }
 
+Duration _noNarrationPause() => Duration.zero;
+
 final class _PendingSubmission {
   _PendingSubmission({
     required this.captures,
@@ -554,4 +616,19 @@ final class _QueuedNarration {
   final AudioTrack track;
   final int generation;
   final Completer<NarrationOutcome> completed = Completer<NarrationOutcome>();
+}
+
+sealed class _TrackResult {}
+
+final class _TrackSuccess implements _TrackResult {
+  const _TrackSuccess(this.track);
+
+  final AudioTrack track;
+}
+
+final class _TrackFailure implements _TrackResult {
+  const _TrackFailure(this.error, this.stackTrace);
+
+  final Object error;
+  final StackTrace stackTrace;
 }

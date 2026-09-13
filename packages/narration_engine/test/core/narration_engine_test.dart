@@ -101,6 +101,141 @@ void main() {
       },
     );
 
+    test('waits for the configured pause between spoken segments', () async {
+      final pauseFinished = Completer<void>();
+      final pauses = <Duration>[];
+      final audio = _Audio(DateTime.utc(2026));
+      final engine = _engine(
+        audio: audio,
+        narrationPause: () => const Duration(milliseconds: 750),
+        delay: (duration) {
+          pauses.add(duration);
+          return pauseFinished.future;
+        },
+      );
+
+      await engine.speak('First segment.');
+      final second = engine.speak('Second segment.');
+      await Future<void>.delayed(Duration.zero);
+
+      expect(pauses, <Duration>[const Duration(milliseconds: 750)]);
+      expect(audio.playCount, 1);
+
+      pauseFinished.complete();
+      await second;
+      expect(audio.playCount, 2);
+      await engine.close();
+    });
+
+    test(
+      'streams narration deltas into TTS in order before narration completes',
+      () async {
+        final narrator = _StreamingNarrator(
+          fallback: NarrationDraft.speak('Non-streaming fallback.'),
+        );
+        final synthesizer = _StreamingSynthesizer();
+        final audio = _Audio(DateTime.utc(2026, 1, 1, 9, 0, 5));
+        final engine = _engine(
+          narrator: narrator,
+          synthesizer: synthesizer,
+          audio: audio,
+        );
+
+        final pending = engine.submit(<CapturedImage>[_capture(0)]);
+        await synthesizer.started.future;
+
+        expect(narrator.narrateCalls, 0);
+        expect(synthesizer.synthesizeCalls, 0);
+        expect(narrator.streamCompleted.isCompleted, isFalse);
+
+        narrator.addText('The ');
+        narrator.addText('creature ');
+        narrator.addText('advances.');
+        await Future<void>.delayed(Duration.zero);
+
+        expect(synthesizer.textDeltas, <String>[
+          'The ',
+          'creature ',
+          'advances.',
+        ]);
+        expect(narrator.streamCompleted.isCompleted, isFalse);
+        expect(audio.playCount, 0);
+
+        await narrator.complete(NarrationDraft.speak('The creature advances.'));
+        final outcome = await pending;
+
+        expect(outcome.kind, NarrationOutcomeKind.spoken);
+        expect(outcome.text, 'The creature advances.');
+        expect(audio.playCount, 1);
+        await engine.close();
+      },
+    );
+
+    test(
+      'uses regular narration when only the narrator supports streaming',
+      () async {
+        final narrator = _StreamingNarrator(
+          fallback: NarrationDraft.speak('The safe fallback speaks.'),
+        );
+        final synthesizer = _Synthesizer();
+        final engine = _engine(narrator: narrator, synthesizer: synthesizer);
+
+        final outcome = await engine.submit(<CapturedImage>[_capture(0)]);
+
+        expect(outcome.kind, NarrationOutcomeKind.spoken);
+        expect(narrator.narrateCalls, 1);
+        expect(narrator.narrateStreamCalls, 0);
+        expect(synthesizer.texts, <String>['The safe fallback speaks.']);
+        await engine.close();
+      },
+    );
+
+    test(
+      'uses regular synthesis when only the synthesizer supports streaming',
+      () async {
+        final narrator = _Narrator(
+          (_) async => NarrationDraft.speak('Ordinary synthesis remains.'),
+        );
+        final synthesizer = _StreamingSynthesizer();
+        final engine = _engine(narrator: narrator, synthesizer: synthesizer);
+
+        final outcome = await engine.submit(<CapturedImage>[_capture(0)]);
+
+        expect(outcome.kind, NarrationOutcomeKind.spoken);
+        expect(synthesizer.synthesizeCalls, 1);
+        expect(synthesizer.streamCalls, 0);
+        expect(synthesizer.synthesizedTexts, <String>[
+          'Ordinary synthesis remains.',
+        ]);
+        await engine.close();
+      },
+    );
+
+    test(
+      'uses a fused renderer without calling narrator or synthesis',
+      () async {
+        final narrator = _Narrator(
+          (_) async => NarrationDraft.speak('This should not be requested.'),
+        );
+        final synthesizer = _Synthesizer();
+        final renderer = _Renderer();
+        final engine = _engine(
+          narrator: narrator,
+          synthesizer: synthesizer,
+          renderer: renderer,
+        );
+
+        final outcome = await engine.submit(<CapturedImage>[_capture(0)]);
+
+        expect(outcome.kind, NarrationOutcomeKind.spoken);
+        expect(outcome.text, 'Rendered in one remote operation.');
+        expect(renderer.requests, hasLength(1));
+        expect(narrator.requests, isEmpty);
+        expect(synthesizer.texts, isEmpty);
+        await engine.close();
+      },
+    );
+
     test(
       'suppresses an unchanged scene before asking the narrator again',
       () async {
@@ -350,31 +485,36 @@ void main() {
     });
   });
 
-  test('default prompt carries restraint, continuity, and recent context', () {
-    final builder = DocumentaryPromptBuilder(maximumWords: 24);
-    final prompt = builder.build(
-      observation: const SceneObservation(
-        description: 'The protagonist reaches for a mug.',
-        fingerprint: 'mug',
-      ),
-      memory: NarrativeMemorySnapshot(
-        recentNarrations: <NarrationMemoryEntry>[
-          NarrationMemoryEntry(
-            text: 'Yesterday, the kettle won.',
-            observedAt: DateTime.utc(2026),
-            motifs: const <String>['rivalry'],
-          ),
-        ],
-        canon: const <String, String>{'kettle': 'an old rival'},
-      ),
-    );
+  test(
+    'default prompt carries grave stakes, continuity, and recent context',
+    () {
+      final builder = DocumentaryPromptBuilder(maximumWords: 24);
+      final prompt = builder.build(
+        observation: const SceneObservation(
+          description: 'The protagonist reaches for a mug.',
+          fingerprint: 'mug',
+        ),
+        memory: NarrativeMemorySnapshot(
+          recentNarrations: <NarrationMemoryEntry>[
+            NarrationMemoryEntry(
+              text: 'Yesterday, the kettle won.',
+              observedAt: DateTime.utc(2026),
+              motifs: const <String>['rivalry'],
+            ),
+          ],
+          canon: const <String, String>{'kettle': 'an old rival'},
+        ),
+      );
 
-    expect(prompt, contains('at most 24 words'));
-    expect(prompt, contains('Silence is a first-class editorial choice'));
-    expect(prompt, contains('kettle: an old rival'));
-    expect(prompt, contains('Yesterday, the kettle won.'));
-    expect(prompt, contains('rivalry'));
-  });
+      expect(prompt, contains('at most 24 words'));
+      expect(prompt, contains('something grave is seconds away'));
+      expect(prompt, contains('secret intentions'));
+      expect(prompt.toLowerCase(), isNot(contains('silence')));
+      expect(prompt, contains('kettle: an old rival'));
+      expect(prompt, contains('Yesterday, the kettle won.'));
+      expect(prompt, contains('rivalry'));
+    },
+  );
 
   test('capture and track reject ambiguous or empty payloads at runtime', () {
     expect(
@@ -408,9 +548,12 @@ CapturedImage _capture(int seconds) {
 
 NarrationEngine _engine({
   _Interpreter? interpreter,
-  _Narrator? narrator,
-  _Synthesizer? synthesizer,
+  NarrationModel? narrator,
+  SpeechSynthesizer? synthesizer,
+  NarrationRenderer? renderer,
   _Audio? audio,
+  Duration Function()? narrationPause,
+  Future<void> Function(Duration)? delay,
 }) {
   return NarrationEngine(
     sceneInterpreter:
@@ -427,10 +570,29 @@ NarrationEngine _engine({
           (_) async => NarrationDraft.speak('The creature approaches.'),
         ),
     speechSynthesizer: synthesizer ?? _Synthesizer(),
+    narrationRenderer: renderer,
     audioOutput: audio ?? _Audio(DateTime.utc(2026, 1, 1, 9, 0, 5)),
     policy: const NarrationPolicy(minimumGap: Duration.zero),
     clock: () => DateTime.utc(2026, 1, 1, 9, 0, 5),
+    narrationPause: narrationPause,
+    delay: delay,
   );
+}
+
+final class _Renderer implements NarrationRenderer {
+  final List<NarrationRequest> requests = <NarrationRequest>[];
+
+  @override
+  Future<RenderedNarration> render(NarrationRequest request) async {
+    requests.add(request);
+    return RenderedNarration(
+      draft: NarrationDraft.speak('Rendered in one remote operation.'),
+      track: AudioTrack.fromBytes(
+        id: 'rendered',
+        bytes: Uint8List.fromList([1]),
+      ),
+    );
+  }
 }
 
 final class _Interpreter implements SceneInterpreter {
@@ -469,6 +631,102 @@ final class _Synthesizer implements SpeechSynthesizer {
       id: 'track-${texts.length}',
       location: '/tmp/track.mp3',
     );
+  }
+}
+
+final class _StreamingNarrator implements StreamingNarrationModel {
+  _StreamingNarrator({required this.fallback});
+
+  final NarrationDraft fallback;
+  final StreamController<String> _text = StreamController<String>();
+  final Completer<NarrationDraft> streamCompleted = Completer<NarrationDraft>();
+  int narrateCalls = 0;
+  int narrateStreamCalls = 0;
+
+  @override
+  Future<NarrationDraft> narrate(NarrationRequest request) async {
+    narrateCalls += 1;
+    return fallback;
+  }
+
+  @override
+  Future<NarrationTextStream> narrateStream(NarrationRequest request) async {
+    narrateStreamCalls += 1;
+    return NarrationTextStream(
+      textDeltas: _text.stream,
+      completed: streamCompleted.future,
+    );
+  }
+
+  void addText(String delta) {
+    _text.add(delta);
+  }
+
+  Future<void> complete(NarrationDraft draft) async {
+    await _text.close();
+    streamCompleted.complete(draft);
+  }
+}
+
+final class _StreamingSynthesizer implements StreamingSpeechSynthesizer {
+  final Completer<void> started = Completer<void>();
+  final List<String> textDeltas = <String>[];
+  final List<String> synthesizedTexts = <String>[];
+  int streamCalls = 0;
+  int synthesizeCalls = 0;
+
+  @override
+  Future<AudioTrack> synthesize(String text) async {
+    synthesizeCalls += 1;
+    synthesizedTexts.add(text);
+    return AudioTrack.fromLocation(
+      id: 'regular-track-$synthesizeCalls',
+      location: '/tmp/regular-track.mp3',
+    );
+  }
+
+  @override
+  Future<StreamingSpeechSynthesis> synthesizeStream(
+    Stream<String> textDeltas,
+  ) async {
+    streamCalls += 1;
+    final operation = _StreamingSynthesis();
+    textDeltas.listen(
+      this.textDeltas.add,
+      onError: operation.fail,
+      onDone: operation.finish,
+    );
+    if (!started.isCompleted) started.complete();
+    return operation;
+  }
+}
+
+final class _StreamingSynthesis implements StreamingSpeechSynthesis {
+  final Completer<AudioTrack> _completed = Completer<AudioTrack>();
+
+  @override
+  Future<AudioTrack> get completed => _completed.future;
+
+  @override
+  Future<void> cancel() async {
+    if (!_completed.isCompleted) {
+      _completed.completeError(StateError('Synthesis cancelled.'));
+    }
+  }
+
+  void finish() {
+    if (_completed.isCompleted) return;
+    _completed.complete(
+      AudioTrack.fromLocation(
+        id: 'streaming-track',
+        location: '/tmp/streaming-track.mp3',
+      ),
+    );
+  }
+
+  void fail(Object error, StackTrace stackTrace) {
+    if (_completed.isCompleted) return;
+    _completed.completeError(error, stackTrace);
   }
 }
 
