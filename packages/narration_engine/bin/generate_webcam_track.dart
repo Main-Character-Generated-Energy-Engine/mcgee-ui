@@ -41,14 +41,12 @@ Future<void> main(List<String> arguments) async {
     );
     stagingDirectory = runDirectory;
     final engine = NarrationEngine(
-      sceneInterpreter: OpenRouterSceneInterpreter(
-        client: client,
-        model: options.visionModel,
-      ),
+      sceneInterpreter: const DirectCaptureInterpreter(),
       narrator: OpenRouterNarrationModel(
         client: client,
         model: options.narrationModel,
         requireSpokenLine: true,
+        includeCaptures: true,
       ),
       speechSynthesizer: OpenRouterSpeechSynthesizer(
         client: client,
@@ -78,7 +76,6 @@ Future<void> main(List<String> arguments) async {
       outputDirectory: runDirectory,
       captures: coreCaptures,
       outcome: outcome,
-      visionModel: options.visionModel,
       narrationModel: options.narrationModel,
       speechModel: options.speechModel,
       voice: options.voiceName,
@@ -113,7 +110,6 @@ final class _Options {
     required this.apiKeyPath,
     required this.source,
     required this.protagonistHint,
-    required this.visionModel,
     required this.narrationModel,
     required this.speechModel,
     required this.voiceName,
@@ -125,7 +121,6 @@ final class _Options {
   final String apiKeyPath;
   final String source;
   final String protagonistHint;
-  final String visionModel;
   final String narrationModel;
   final String speechModel;
   final String voiceName;
@@ -151,7 +146,6 @@ final class _Options {
       '--api-key-file',
       '--source',
       '--protagonist-hint',
-      '--vision-model',
       '--narration-model',
       '--speech-model',
       '--voice',
@@ -177,7 +171,6 @@ final class _Options {
       protagonistHint:
           values['--protagonist-hint'] ??
           'the recurring foreground camera holder',
-      visionModel: values['--vision-model'] ?? 'openai/gpt-4.1-mini',
       narrationModel: values['--narration-model'] ?? 'openai/gpt-5.6-sol',
       speechModel: speechModel,
       voiceName: voiceName,
@@ -196,7 +189,6 @@ Usage: dart run bin/generate_webcam_track.dart [options]
   --api-key-file PATH   API key file (default: .secrets/openrouter-key)
   --source NAME         Capture source stored in the manifest (default: webcam)
   --protagonist-hint H  Visual hint (default: recurring foreground camera holder)
-  --vision-model ID     Vision model (default: openai/gpt-4.1-mini)
   --narration-model ID  Comedy model (default: openai/gpt-5.6-sol)
   --speech-model ID     Speech model (default: fish-audio/s2.1-pro)
   --voice NAME          morgan-freeman, david-attenborough, jade, or a provider voice ID

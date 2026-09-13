@@ -14,6 +14,7 @@ dependencies:
   camera: ^0.11.2+1
   camera_windows: ^0.2.6+5
   flutter_svg: ^2.3.0
+  image: ^4.5.4
   narration_engine:
     path: packages/narration_engine
   path_provider: ^2.1.6
@@ -28,4 +29,8 @@ flutter:
   assets:
     - binoculars-icon.svg
     - lib/assets/MCgEe.svg
+    - lib/assets/logo.svg
+    - lib/assets/morgan-avatar.webp
+    - lib/assets/david-avatar.webp
+    - lib/assets/eve-avatar.webp
     - lib/assets/switch.mp3

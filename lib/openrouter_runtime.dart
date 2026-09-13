@@ -32,33 +32,34 @@ final class OpenRouterNarrationRuntime {
       engine: NarrationEngine(
         // The narration model sees the latest image directly. A local scene
         // marker avoids a second, sequential vision request on the live path.
-        sceneInterpreter: const _LiveFrameInterpreter(),
+        sceneInterpreter: const DirectCaptureInterpreter(),
         narrator: OpenRouterNarrationModel(
           client: client,
           requireSpokenLine: true,
           includeCaptures: true,
           continuous: true,
-          maximumWords: 70,
+          maximumWords: 20,
         ),
         speechSynthesizer: speechSynthesizer,
         audioOutput: audioOutput,
         promptBuilder: const ContinuousDocumentaryPromptBuilder(
-          maximumWords: 70,
+          maximumWords: 20,
         ),
         policy: const NarrationPolicy(
           minimumGap: Duration.zero,
-          maximumObservationAge: null,
+          maximumObservationAge: Duration(seconds: 6),
           rollingWindow: Duration.zero,
           maxNarrationsPerWindow: 1,
           minimumSalience: 0,
           sceneLookback: 0,
-          maximumWords: 70,
+          maximumWords: 20,
           rejectRepeatedNarration: false,
         ),
         maxCapturesPerObservation: 1,
         // Prepare from fresh frames during playback. Only the newest ready
         // passage survives, preventing a stale narration backlog.
         prefetchDuringPlayback: true,
+        coalesceWhileBusy: true,
       ),
       speechSynthesizer: speechSynthesizer,
     );
@@ -104,24 +105,6 @@ final class OpenRouterNarrationRuntime {
     _closed = true;
     await _engine.close();
     _client.close();
-  }
-}
-
-/// Lightweight marker used by the live path. The vision-capable narration
-/// model performs the actual image interpretation and writing in one request.
-final class _LiveFrameInterpreter implements SceneInterpreter {
-  const _LiveFrameInterpreter();
-
-  @override
-  Future<SceneObservation> interpret(List<CapturedImage> captures) async {
-    final capture = captures.last;
-    return SceneObservation(
-      description: 'The latest live camera frame.',
-      fingerprint: 'live-frame:${capture.id}',
-      details: const <String, String>{
-        'instruction': 'Describe only what is visible in the attached frame.',
-      },
-    );
   }
 }
 

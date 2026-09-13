@@ -3,52 +3,10 @@ import 'dart:typed_data';
 import 'package:narration_engine/src/core/models.dart';
 import 'package:narration_engine/src/openai/openai_http_client.dart';
 import 'package:narration_engine/src/openai/openai_narration_model.dart';
-import 'package:narration_engine/src/openai/openai_scene_interpreter.dart';
 import 'package:narration_engine/src/openai/openai_speech_synthesizer.dart';
 import 'package:test/test.dart';
 
 void main() {
-  test('parses a provider-neutral scene observation', () {
-    final observation = parseSceneObservation(
-      {
-        'output': [
-          {
-            'type': 'message',
-            'content': [
-              {
-                'type': 'output_text',
-                'text': '''
-{"description":"A person remains seated while turning toward a nearby object.","fingerprint":"desk-turning","salience":0.6,"setting":"room with desk","action":"turning while seated","visible_subjects":"one person","temporal_change":"head and upper body turn","focal_capture_id":"20.jpg"}
-''',
-              },
-            ],
-          },
-        ],
-      },
-      {'10.jpg', '20.jpg'},
-    );
-
-    expect(observation.fingerprint, 'desk-turning');
-    expect(observation.salience, 0.6);
-    expect(observation.details['focal_capture_id'], '20.jpg');
-  });
-
-  test('rejects an unknown focal capture ID', () {
-    expect(
-      () => parseSceneObservation(
-        {
-          'output_text':
-              '{"description":"Still room.","fingerprint":"room-still",'
-              '"salience":0.1,"setting":"room","action":"none",'
-              '"visible_subjects":"person","temporal_change":"none",'
-              '"focal_capture_id":"missing.jpg"}',
-        },
-        {'10.jpg'},
-      ),
-      throwsA(isA<FormatException>()),
-    );
-  });
-
   test('parses a spoken narration decision', () {
     final draft = parseNarrationDraft({
       'output_text':
@@ -86,16 +44,18 @@ void main() {
         bytes: Uint8List.fromList([0xff, 0xd8, 0xff]),
         protagonistHint: 'the foreground camera holder',
       );
-      final observation = await OpenAiSceneInterpreter(client: api)
-          .interpret([capture]);
       final draft =
           await OpenAiNarrationModel(
             client: api,
             requireSpokenLine: true,
+            includeCaptures: true,
           ).narrate(
             NarrationRequest(
               prompt: 'A test prompt',
-              observation: observation,
+              observation: const SceneObservation(
+                description: 'The latest live camera frame.',
+                fingerprint: 'live-frame',
+              ),
               captures: [capture],
               memory: const NarrativeMemorySnapshot(),
             ),
@@ -103,11 +63,13 @@ void main() {
       final track = await OpenAiSpeechSynthesizer(client: api)
           .synthesize(draft.text!);
 
-      final sceneBody = api.responseBodies.first;
-      expect(sceneBody['max_output_tokens'], 500);
-      expect(sceneBody['store'], isFalse);
-      expect(_schemaName(sceneBody), 'scene_observation');
-      final input = sceneBody['input'] as List;
+      final narrationBody = api.responseBodies.single;
+      expect(narrationBody['model'], 'gpt-5.6-sol');
+      expect(narrationBody['max_output_tokens'], 150);
+      expect(narrationBody['reasoning'], {'effort': 'none'});
+      expect(narrationBody['store'], isFalse);
+      expect(_schemaName(narrationBody), 'narration_decision');
+      final input = narrationBody['input'] as List;
       final content = (input.single as Map)['content'] as List;
       expect(
         (content.first as Map)['text'],
@@ -118,9 +80,6 @@ void main() {
       );
       expect(image['image_url'], startsWith('data:image/jpeg;base64,'));
 
-      expect(api.responseBodies[1]['store'], isFalse);
-      expect(api.responseBodies[1]['max_output_tokens'], 400);
-      expect(_schemaName(api.responseBodies[1]), 'narration_decision');
       expect(api.speechBodies.single['response_format'], 'mp3');
       expect(api.speechBodies.single['model'], 'gpt-4o-mini-tts');
       expect(track.bytes, [0x49, 0x44, 0x33]);
@@ -141,17 +100,6 @@ final class _FakeOpenAiApi implements OpenAiApi {
   @override
   Future<Map<String, Object?>> createResponse(Map<String, Object?> body) async {
     responseBodies.add(body);
-    if (_schemaName(body) == 'scene_observation') {
-      return {
-        'output_text':
-            '{"description":"A person turns while seated.",'
-            '"fingerprint":"desk-turning","salience":0.6,'
-            '"setting":"room","action":"turning",'
-            '"visible_subjects":"one person",'
-            '"temporal_change":"the person turns",'
-            '"focal_capture_id":"10.jpg"}',
-      };
-    }
     return {
       'output_text':
           '{"action":"speak","text":"The campaign advances by inches.",'

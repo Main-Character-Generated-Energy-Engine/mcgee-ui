@@ -47,7 +47,6 @@ void main() {
         playbackStartedAt: DateTime.utc(2026, 9, 12, 1),
         text: 'At last, the morning yields to administrative weather.',
       ),
-      visionModel: 'vision-test',
       narrationModel: 'narration-test',
       speechModel: 'speech-test',
       voice: 'voice-test',
@@ -64,6 +63,7 @@ void main() {
       '2026-09-12T01:00:00.000Z',
     );
     expect(manifest['source_captures'][0]['id'], capture.id);
+    expect(manifest['generation']['vision_model'], 'narration-test');
     expect(manifest['generation']['narration_model'], 'narration-test');
     expect(manifest['generation']['provider'], 'provider-test');
     expect(manifest['generation']['voice_id'], 'voice-id-test');

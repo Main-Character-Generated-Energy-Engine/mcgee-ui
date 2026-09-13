@@ -172,6 +172,64 @@ void main() {
       await engine.close();
     });
 
+    test(
+      'coalesces busy submissions and prepares only the newest one',
+      () async {
+        final firstInterpretation = Completer<SceneObservation>();
+        final interpreter = _Interpreter((captures) {
+          if (captures.single.id == '0') return firstInterpretation.future;
+          return Future<SceneObservation>.value(
+            SceneObservation(
+              description: 'Moment ${captures.single.id}',
+              fingerprint: 'moment:${captures.single.id}',
+            ),
+          );
+        });
+        final narrator = _Narrator(
+          (request) async => NarrationDraft.speak(
+            'Moment ${request.captures.single.id} advances.',
+          ),
+        );
+        final engine = NarrationEngine(
+          sceneInterpreter: interpreter,
+          narrator: narrator,
+          speechSynthesizer: _Synthesizer(),
+          audioOutput: _Audio(DateTime.utc(2026, 1, 1, 9, 0, 5)),
+          policy: const NarrationPolicy(
+            minimumGap: Duration.zero,
+            sceneLookback: 0,
+            rejectRepeatedNarration: false,
+          ),
+          clock: () => DateTime.utc(2026, 1, 1, 9, 0, 5),
+          prefetchDuringPlayback: true,
+          coalesceWhileBusy: true,
+        );
+
+        final first = engine.submit(<CapturedImage>[_capture(0)]);
+        final replaced = engine.submit(<CapturedImage>[_capture(1)]);
+        final newest = engine.submit(<CapturedImage>[_capture(2)]);
+
+        expect((await replaced).kind, NarrationOutcomeKind.silent);
+        firstInterpretation.complete(
+          const SceneObservation(
+            description: 'Moment 0',
+            fingerprint: 'moment:0',
+          ),
+        );
+        await Future.wait(<Future<NarrationOutcome>>[first, newest]);
+
+        expect(
+          interpreter.received.map((captures) => captures.single.id),
+          <String>['0', '2'],
+        );
+        expect(
+          narrator.requests.map((request) => request.captures.single.id),
+          <String>['0', '2'],
+        );
+        await engine.close();
+      },
+    );
+
     test('close safely invalidates work still waiting on a provider', () async {
       final interpretation = Completer<SceneObservation>();
       final interpreter = _Interpreter((_) => interpretation.future);
@@ -341,6 +399,7 @@ void main() {
 
 CapturedImage _capture(int seconds) {
   return CapturedImage(
+    id: '$seconds',
     source: 'webcam',
     capturedAt: DateTime.utc(2026, 1, 1, 9, 0, seconds),
     bytes: Uint8List.fromList(<int>[seconds]),

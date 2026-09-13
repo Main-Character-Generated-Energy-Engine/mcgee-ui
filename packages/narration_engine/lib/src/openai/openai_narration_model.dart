@@ -9,12 +9,13 @@ import 'openai_response_parsing.dart';
 final class OpenAiNarrationModel implements NarrationModel {
   const OpenAiNarrationModel({
     required this.client,
-    this.model = 'gpt-4.1-mini',
+    this.model = 'gpt-5.6-sol',
     this.requireSpokenLine = false,
     this.continuous = false,
     this.maximumWords = 24,
     this.includeCaptures = false,
-  }) : assert(maximumWords > 0);
+  }) : assert(maximumWords > 0),
+       assert(!continuous || maximumWords >= 10);
 
   final OpenAiApi client;
   final String model;
@@ -32,11 +33,12 @@ final class OpenAiNarrationModel implements NarrationModel {
         ? 'Always choose speak, not silence.'
         : 'Silence is a successful choice when the moment does not earn a line.';
     final formatInstruction = continuous
-        ? 'A spoken passage should contain 45 to $maximumWords words across two to four concise sentences, with no stage directions.'
+        ? 'A spoken passage should contain 10 to $maximumWords words in one concise sentence, with no stage directions.'
         : 'A spoken line must be one sentence of at most $maximumWords words, with no stage directions.';
     final response = await client.createResponse({
       'model': model,
-      'max_output_tokens': 400,
+      'reasoning': {'effort': 'none'},
+      'max_output_tokens': 150,
       'store': false,
       'instructions':
           '''

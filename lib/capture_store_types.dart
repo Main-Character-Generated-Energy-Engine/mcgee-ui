@@ -3,7 +3,6 @@ import 'dart:typed_data';
 abstract interface class CaptureStore {
   Future<StoredCapture> save({
     required int timestamp,
-    required String sourcePath,
     required Future<Uint8List> Function() readBytes,
   });
 }

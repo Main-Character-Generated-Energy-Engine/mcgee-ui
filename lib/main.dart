@@ -48,9 +48,13 @@ class CameraCapturePage extends StatefulWidget {
   State<CameraCapturePage> createState() => _CameraCapturePageState();
 }
 
+enum _ExperienceStage { setup, cameraConsent, live }
+
 class _CameraCapturePageState extends State<CameraCapturePage>
     with WidgetsBindingObserver, TickerProviderStateMixin {
   CameraController? _controller;
+  final GlobalKey<FormState> _keyFormKey = GlobalKey<FormState>();
+  late final TextEditingController _keyController;
   late final AnimationController _entryController;
   late final AnimationController _binocularsController;
   late final Animation<double> _previewEntry;
@@ -68,6 +72,10 @@ class _CameraCapturePageState extends State<CameraCapturePage>
   bool _narrationUnavailable = false;
   bool _hasStartedNarrationAudio = false;
   bool _isNarrationPlaying = false;
+  bool _isKeyObscured = true;
+  bool _startupLineRequested = false;
+  _ExperienceStage _experienceStage = _ExperienceStage.setup;
+  String? _keyError;
   String _selectedActor = 'Morgan Freeman';
   AudioPlayer? _switchSoundPlayer;
   Uint8List? _switchSoundBytes;
@@ -75,7 +83,13 @@ class _CameraCapturePageState extends State<CameraCapturePage>
   static const _actors = <String, OpenRouterVoiceOption>{
     'Morgan Freeman': OpenRouterVoiceOption.morganFreeman,
     'David Attenborough': OpenRouterVoiceOption.davidAttenborough,
-    'Jade': OpenRouterVoiceOption.jade,
+    'Eve': OpenRouterVoiceOption.jade,
+  };
+
+  static const _actorAvatars = <String, String>{
+    'Morgan Freeman': 'lib/assets/morgan-avatar.webp',
+    'David Attenborough': 'lib/assets/david-avatar.webp',
+    'Eve': 'lib/assets/eve-avatar.webp',
   };
 
   void _printError(String context, Object error, [StackTrace? stackTrace]) {
@@ -87,6 +101,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _keyController = TextEditingController();
     _entryController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1200),
@@ -100,17 +115,31 @@ class _CameraCapturePageState extends State<CameraCapturePage>
       curve: const Interval(0.18, 0.75, curve: Curves.easeOutCubic),
     );
     _entryController.forward();
-    _initializeCamera();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      unawaited(_configureOpenRouterKey(tryDefaultFile: true));
-    });
+    unawaited(_prefillOpenRouterKey());
+  }
+
+  Future<void> _prefillOpenRouterKey() async {
+    try {
+      final key = await loadDefaultOpenRouterKey();
+      if (!mounted || key == null || _keyController.text.isNotEmpty) return;
+      _keyController.text = key;
+    } catch (error, stackTrace) {
+      _printError(
+        'Default OpenRouter key could not be loaded',
+        error,
+        stackTrace,
+      );
+    }
   }
 
   Future<void> _initializeCamera() async {
     if (_isInitializingCamera) {
       return;
     }
-    _isInitializingCamera = true;
+    setState(() {
+      _isInitializingCamera = true;
+      _error = null;
+    });
     try {
       final cameras = await availableCameras();
       if (cameras.isEmpty) {
@@ -140,9 +169,15 @@ class _CameraCapturePageState extends State<CameraCapturePage>
         _controller = controller;
         _captureStore = captureStore;
         _error = null;
+        _experienceStage = _ExperienceStage.live;
       });
       _entryController.forward(from: 0);
       _startCaptureLoop(captureImmediately: true);
+      final runtime = _narrationRuntime;
+      if (!_startupLineRequested && runtime != null) {
+        _startupLineRequested = true;
+        unawaited(_speakStartupLine(runtime));
+      }
     } on CameraException catch (exception, stackTrace) {
       _printError('Camera initialization failed', exception, stackTrace);
       if (mounted) {
@@ -158,7 +193,11 @@ class _CameraCapturePageState extends State<CameraCapturePage>
         });
       }
     } finally {
-      _isInitializingCamera = false;
+      if (mounted) {
+        setState(() => _isInitializingCamera = false);
+      } else {
+        _isInitializingCamera = false;
+      }
     }
   }
 
@@ -209,16 +248,12 @@ class _CameraCapturePageState extends State<CameraCapturePage>
 
     _isCapturing = true;
     try {
-      final timestamp = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+      final capturedAt = DateTime.now().toUtc();
+      final timestamp = capturedAt.millisecondsSinceEpoch ~/ 1000;
       final image = await controller.takePicture();
       final capture = await captureStore.save(
         timestamp: timestamp,
-        sourcePath: image.path,
         readBytes: image.readAsBytes,
-      );
-      final capturedAt = DateTime.fromMillisecondsSinceEpoch(
-        timestamp * 1000,
-        isUtc: true,
       );
       unawaited(_narrateCapture(capture, capturedAt));
     } on CameraException catch (exception, stackTrace) {
@@ -258,28 +293,16 @@ class _CameraCapturePageState extends State<CameraCapturePage>
     }
   }
 
-  Future<void> _configureOpenRouterKey({required bool tryDefaultFile}) async {
+  Future<void> _connectOpenRouter() async {
     if (_isSelectingKey) return;
-    setState(() => _isSelectingKey = true);
+    if (!(_keyFormKey.currentState?.validate() ?? false)) return;
+    TextInput.finishAutofillContext(shouldSave: false);
+    setState(() {
+      _isSelectingKey = true;
+      _keyError = null;
+    });
     try {
-      String? key;
-      String? fallbackMessage;
-      if (tryDefaultFile) {
-        try {
-          key = await loadDefaultOpenRouterKey();
-        } catch (error, stackTrace) {
-          _printError(
-            'Default OpenRouter key could not be loaded',
-            error,
-            stackTrace,
-          );
-          fallbackMessage =
-              'The key in .secrets/openrouter-key could not be used.';
-        }
-      }
-      if (!mounted) return;
-      key ??= await _showOpenRouterKeyDialog(message: fallbackMessage);
-      if (key == null || !mounted) return;
+      final key = _keyController.text.trim();
 
       final audioOutput = FlutterAudioOutput();
       late final OpenRouterNarrationRuntime runtime;
@@ -298,7 +321,6 @@ class _CameraCapturePageState extends State<CameraCapturePage>
       final previousRuntime = _narrationRuntime;
       final previousAudioOutput = _audioOutput;
       final previousEventSubscription = _narrationEventSubscription;
-      final shouldSpeakStartupLine = previousRuntime == null;
       if (!mounted) {
         await runtime.close();
         await audioOutput.dispose();
@@ -308,8 +330,11 @@ class _CameraCapturePageState extends State<CameraCapturePage>
         _narrationRuntime = runtime;
         _audioOutput = audioOutput;
         _narrationUnavailable = false;
-        _hasStartedNarrationAudio = false;
         _isNarrationPlaying = false;
+        _experienceStage =
+            (_controller?.value.isInitialized ?? false)
+            ? _ExperienceStage.live
+            : _ExperienceStage.cameraConsent;
       });
       _narrationEventSubscription = runtime.events.listen((event) {
         if (!mounted || !identical(runtime, _narrationRuntime)) return;
@@ -348,14 +373,20 @@ class _CameraCapturePageState extends State<CameraCapturePage>
       await previousEventSubscription?.cancel();
       await previousRuntime?.close();
       await previousAudioOutput?.dispose();
-      if (shouldSpeakStartupLine &&
-          mounted &&
-          identical(runtime, _narrationRuntime)) {
-        unawaited(_speakStartupLine(runtime));
+      if (mounted &&
+          identical(runtime, _narrationRuntime) &&
+          _experienceStage == _ExperienceStage.live) {
+        _startCaptureLoop(captureImmediately: true);
       }
     } catch (error, stackTrace) {
       _printError('OpenRouter configuration failed', error, stackTrace);
-      if (mounted) setState(() => _narrationUnavailable = true);
+      if (mounted) {
+        setState(() {
+          _narrationUnavailable = true;
+          _keyError =
+              'That key could not be connected. Check it and try again.';
+        });
+      }
     } finally {
       if (mounted) setState(() => _isSelectingKey = false);
     }
@@ -385,72 +416,21 @@ class _CameraCapturePageState extends State<CameraCapturePage>
     }
   }
 
-  Future<String?> _showOpenRouterKeyDialog({String? message}) async {
-    final formKey = GlobalKey<FormState>();
-    var key = '';
-    return showDialog<String>(
-      context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          title: const Text('Connect OpenRouter'),
-          content: Form(
-            key: formKey,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                if (message != null) ...[
-                  Text(message),
-                  const SizedBox(height: 12),
-                ],
-                TextFormField(
-                  autofocus: true,
-                  obscureText: true,
-                  autocorrect: false,
-                  enableSuggestions: false,
-                  keyboardType: TextInputType.visiblePassword,
-                  onChanged: (value) => key = value,
-                  decoration: const InputDecoration(
-                    labelText: 'OpenRouter API key',
-                    hintText: 'Paste your OpenRouter key here',
-                  ),
-                  validator: (value) {
-                    final key = value?.trim() ?? '';
-                    if (key.isEmpty) return 'Paste your OpenRouter key.';
-                    if (key.contains(RegExp(r'\s'))) {
-                      return 'The key cannot contain whitespace.';
-                    }
-                    return null;
-                  },
-                ),
-                const SizedBox(height: 12),
-                const Text('The key is kept in memory only and is not stored.'),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () {
-                if (formKey.currentState?.validate() ?? false) {
-                  Navigator.pop(dialogContext, key.trim());
-                }
-              },
-              child: const Text('Connect'),
-            ),
-          ],
-        );
-      },
-    );
+  void _editConnection() {
+    _captureTimer?.cancel();
+    unawaited(_narrationRuntime?.stop());
+    setState(() {
+      _keyError = null;
+      _experienceStage = _ExperienceStage.setup;
+    });
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.inactive ||
-        state == AppLifecycleState.paused) {
+    if (state == AppLifecycleState.inactive) return;
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.detached) {
       _isAppActive = false;
       _captureTimer?.cancel();
       final controller = _controller;
@@ -465,7 +445,9 @@ class _CameraCapturePageState extends State<CameraCapturePage>
       unawaited(_narrationRuntime?.stop());
     } else if (state == AppLifecycleState.resumed) {
       _isAppActive = true;
-      _initializeCamera();
+      if (_experienceStage == _ExperienceStage.live && _controller == null) {
+        unawaited(_initializeCamera());
+      }
     }
   }
 
@@ -473,6 +455,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _captureTimer?.cancel();
+    _keyController.dispose();
     _entryController.dispose();
     _binocularsController.dispose();
     unawaited(_narrationEventSubscription?.cancel());
@@ -499,42 +482,341 @@ class _CameraCapturePageState extends State<CameraCapturePage>
 
     return Scaffold(
       appBar: AppBar(toolbarHeight: 0),
-      body: ColoredBox(
-        color: Colors.black,
-        child: SafeArea(
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              Center(
-                child: _buildEntryReveal(
-                  _previewEntry,
-                  _buildPreview(controller, isReady),
+      body: switch (_experienceStage) {
+        _ExperienceStage.setup => _buildSetupScreen(),
+        _ExperienceStage.cameraConsent => _buildCameraConsentScreen(),
+        _ExperienceStage.live => ColoredBox(
+          color: Colors.black,
+          child: SafeArea(
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                Center(
+                  child: _buildEntryReveal(
+                    _previewEntry,
+                    _buildPreview(controller, isReady),
+                  ),
+                ),
+                Positioned(
+                  top: 12,
+                  right: 12,
+                  child: IconButton.filledTonal(
+                    key: const ValueKey('narrator-key-button'),
+                    onPressed: _editConnection,
+                    tooltip: 'Narrator settings',
+                    icon: Icon(
+                      _narrationRuntime == null
+                          ? Icons.key_rounded
+                          : _narrationUnavailable
+                          ? Icons.volume_off_rounded
+                          : Icons.volume_up_rounded,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      },
+    );
+  }
+
+  Widget _buildSetupScreen() {
+    return _buildOnboardingBackground(
+      Form(
+        key: _keyFormKey,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Semantics(
+              label: 'MCgEe',
+              image: true,
+              child: SizedBox(
+                height: 138,
+                child: SvgPicture.asset(
+                  'lib/assets/logo.svg',
+                  fit: BoxFit.contain,
                 ),
               ),
-              Positioned(
-                top: 12,
-                right: 12,
-                child: IconButton.filledTonal(
-                  key: const ValueKey('narrator-key-button'),
-                  onPressed: _isSelectingKey
-                      ? null
-                      : () => _configureOpenRouterKey(tryDefaultFile: false),
-                  tooltip: _narrationRuntime == null
-                      ? 'Connect narrator'
-                      : 'Change narrator key',
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Morgan Freeman is ready. A different voice may audition below.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.white.withValues(alpha: 0.68)),
+            ),
+            const SizedBox(height: 28),
+            _buildSetupActorSelector(),
+            const SizedBox(height: 30),
+            TextFormField(
+              key: const ValueKey('openrouter-key-field'),
+              controller: _keyController,
+              autofocus: false,
+              obscureText: _isKeyObscured,
+              autocorrect: false,
+              enableSuggestions: false,
+              enableIMEPersonalizedLearning: false,
+              autofillHints: null,
+              keyboardType: TextInputType.text,
+              textInputAction: TextInputAction.done,
+              maxLines: 1,
+              expands: false,
+              onChanged: (_) {
+                if (_keyError != null) setState(() => _keyError = null);
+              },
+              onFieldSubmitted: (_) => unawaited(_connectOpenRouter()),
+              decoration: InputDecoration(
+                labelText: 'OpenRouter API key',
+                hintText: 'Paste your key',
+                errorText: _keyError,
+                suffixIcon: IconButton(
+                  onPressed: () {
+                    setState(() => _isKeyObscured = !_isKeyObscured);
+                  },
+                  tooltip: _isKeyObscured ? 'Show key' : 'Hide key',
                   icon: Icon(
-                    _narrationRuntime == null
-                        ? Icons.key_rounded
-                        : _narrationUnavailable
-                        ? Icons.volume_off_rounded
-                        : Icons.volume_up_rounded,
+                    _isKeyObscured
+                        ? Icons.visibility_rounded
+                        : Icons.visibility_off_rounded,
                   ),
                 ),
               ),
+              validator: (value) {
+                final key = value?.trim() ?? '';
+                if (key.isEmpty) return 'Paste your OpenRouter key.';
+                if (key.contains(RegExp(r'\s'))) {
+                  return 'The key cannot contain whitespace.';
+                }
+                return null;
+              },
+            ),
+            const SizedBox(height: 10),
+            Text(
+              'Kept in memory for this tab only.',
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.52),
+                fontSize: 12,
+              ),
+            ),
+            const SizedBox(height: 24),
+            FilledButton.icon(
+              key: const ValueKey('continue-setup-button'),
+              onPressed: _isSelectingKey ? null : _connectOpenRouter,
+              icon: _isSelectingKey
+                  ? const SizedBox.square(
+                      dimension: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.arrow_forward_rounded),
+              label: Text(_isSelectingKey ? 'Connecting…' : 'Continue'),
+            ),
+            if (_controller?.value.isInitialized ?? false) ...[
+              const SizedBox(height: 8),
+              TextButton(
+                onPressed: _isSelectingKey
+                    ? null
+                    : () {
+                        setState(
+                          () => _experienceStage = _ExperienceStage.live,
+                        );
+                        _startCaptureLoop(captureImmediately: false);
+                      },
+                child: const Text('Back to camera'),
+              ),
             ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCameraConsentScreen() {
+    return _buildOnboardingBackground(
+      Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Icon(
+            Icons.auto_awesome_rounded,
+            color: Colors.white,
+            size: 54,
+          ),
+          const SizedBox(height: 22),
+          const Text(
+            'Your story is waiting.',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 34,
+              fontWeight: FontWeight.w700,
+              letterSpacing: -1,
+            ),
+          ),
+          const SizedBox(height: 14),
+          Text(
+            'The lights are ready. $_selectedActor has '
+            'cleared their throat. All that remains is you.',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: Colors.white.withValues(alpha: 0.76),
+              fontSize: 17,
+              height: 1.45,
+            ),
+          ),
+          const SizedBox(height: 14),
+          Text(
+            'Allow camera access while this tab is open, and let the ordinary '
+            'receive the gravitas it deserves.',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: Colors.white.withValues(alpha: 0.76),
+              fontSize: 17,
+              height: 1.45,
+            ),
+          ),
+          if (_error case final error?) ...[
+            const SizedBox(height: 18),
+            Text(
+              error,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Color(0xffffa9a9)),
+            ),
+          ],
+          const SizedBox(height: 28),
+          FilledButton.icon(
+            key: const ValueKey('enable-camera-button'),
+            onPressed: _isInitializingCamera ? null : _initializeCamera,
+            icon: _isInitializingCamera
+                ? const SizedBox.square(
+                    dimension: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.videocam_rounded),
+            label: Text(
+              _isInitializingCamera
+                  ? 'Summoning the camera…'
+                  : 'Give me main character energy',
+            ),
+          ),
+          const SizedBox(height: 8),
+          TextButton(
+            onPressed: _isInitializingCamera
+                ? null
+                : () {
+                    setState(
+                      () => _experienceStage = _ExperienceStage.setup,
+                    );
+                  },
+            child: const Text('Change narrator or key'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildOnboardingBackground(Widget child) {
+    return DecoratedBox(
+      decoration: const BoxDecoration(
+        gradient: RadialGradient(
+          center: Alignment(0, -0.35),
+          radius: 1.15,
+          colors: <Color>[Color(0xff263832), Color(0xff090d0c)],
+        ),
+      ),
+      child: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 460),
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: const Color(0xff111816).withValues(alpha: 0.92),
+                  borderRadius: BorderRadius.circular(24),
+                  border: Border.all(color: Colors.white24),
+                  boxShadow: const <BoxShadow>[
+                    BoxShadow(
+                      color: Colors.black54,
+                      blurRadius: 40,
+                      offset: Offset(0, 20),
+                    ),
+                  ],
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(28),
+                  child: child,
+                ),
+              ),
+            ),
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildSetupActorSelector() {
+    return Wrap(
+      alignment: WrapAlignment.center,
+      spacing: 18,
+      runSpacing: 18,
+      children: [
+        for (final entry in _actors.entries)
+          Semantics(
+            key: ValueKey('setup-actor-${entry.key}'),
+            button: true,
+            selected: _selectedActor == entry.key,
+            label: 'Choose ${entry.key} as narrator',
+            child: InkWell(
+              onTap: () => _selectActor(entry.key),
+              borderRadius: BorderRadius.circular(50),
+              child: SizedBox(
+                width: 104,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    AnimatedContainer(
+                      duration: const Duration(milliseconds: 180),
+                      padding: const EdgeInsets.all(3),
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: _selectedActor == entry.key
+                              ? const Color(0xff8ee6c7)
+                              : Colors.white24,
+                          width: _selectedActor == entry.key ? 3 : 1,
+                        ),
+                      ),
+                      child: ClipOval(
+                        child: Image.asset(
+                          _actorAvatars[entry.key]!,
+                          width: 72,
+                          height: 72,
+                          fit: BoxFit.cover,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      entry.key,
+                      textAlign: TextAlign.center,
+                      maxLines: 2,
+                      style: TextStyle(
+                        color: _selectedActor == entry.key
+                            ? Colors.white
+                            : Colors.white70,
+                        fontSize: 12,
+                        fontWeight: _selectedActor == entry.key
+                            ? FontWeight.w700
+                            : FontWeight.w400,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+      ],
     );
   }
 
@@ -811,40 +1093,34 @@ class _CameraCapturePageState extends State<CameraCapturePage>
     return LayoutBuilder(
       builder: (context, constraints) {
         final avatarSize = constraints.maxWidth < 150 ? 34.0 : 48.0;
-        const avatarIcons = [Icons.person, Icons.person, Icons.person];
         return Row(
           mainAxisAlignment: MainAxisAlignment.spaceEvenly,
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            for (var index = 0; index < _actors.length; index++)
-              InkWell(
-                onTap: () => _selectActor(_actors.keys.elementAt(index)),
-                borderRadius: BorderRadius.circular(100),
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 180),
-                  padding: const EdgeInsets.all(3),
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    border: Border.all(
-                      color: _selectedActor == _actors.keys.elementAt(index)
-                          ? Colors.white
-                          : Colors.white30,
-                      width: _selectedActor == _actors.keys.elementAt(index)
-                          ? 3
-                          : 1,
+            for (final actor in _actors.keys)
+              Semantics(
+                button: true,
+                selected: _selectedActor == actor,
+                label: 'Choose $actor as narrator',
+                child: InkWell(
+                  onTap: () => _selectActor(actor),
+                  borderRadius: BorderRadius.circular(100),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 180),
+                    padding: const EdgeInsets.all(3),
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: _selectedActor == actor
+                            ? Colors.white
+                            : Colors.white30,
+                        width: _selectedActor == actor ? 3 : 1,
+                      ),
                     ),
-                  ),
-                  child: CircleAvatar(
-                    radius: avatarSize / 2,
-                    backgroundColor: index == 0
-                        ? const Color(0xff6d7880)
-                        : index == 1
-                        ? const Color(0xff8b6d57)
-                        : const Color(0xff8c5570),
-                    child: Icon(
-                      avatarIcons[index],
-                      color: Colors.white,
-                      size: avatarSize * 0.62,
+                    child: CircleAvatar(
+                      radius: avatarSize / 2,
+                      backgroundColor: const Color(0xff343c39),
+                      backgroundImage: AssetImage(_actorAvatars[actor]!),
                     ),
                   ),
                 ),

@@ -62,8 +62,8 @@ Return a structured speak-or-silence decision.''';
 /// Prompt for a live narration stream whose passages should connect naturally.
 final class ContinuousDocumentaryPromptBuilder
     implements NarrationPromptBuilder {
-  const ContinuousDocumentaryPromptBuilder({this.maximumWords = 70})
-    : assert(maximumWords > 0);
+  const ContinuousDocumentaryPromptBuilder({this.maximumWords = 20})
+    : assert(maximumWords >= 10);
 
   final int maximumWords;
 
@@ -83,7 +83,7 @@ final class ContinuousDocumentaryPromptBuilder
         .join('\n');
 
     return '''You are providing continuous live nature-documentary narration about one ordinary human protagonist.
-Write the next connected passage in 45 to $maximumWords words. Use two to four concise sentences so the audio lasts long enough for the following passage to be prepared.
+Write the next connected passage in 10 to $maximumWords words as one concise sentence.
 Always speak. Even when little has changed, advance the commentary through precise visible detail, gentle anticipation, or continuity with the previous passage.
 Treat recent narration as the preceding part of one flowing track: continue from it without repeating its wording or restarting the premise.
 Stay grounded in visible behavior. Do not infer sensitive traits or facts that are not visible.

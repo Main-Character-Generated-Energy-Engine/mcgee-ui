@@ -3,7 +3,6 @@ import 'dart:typed_data';
 import 'package:narration_engine/src/core/models.dart';
 import 'package:narration_engine/src/openai/openai_http_client.dart';
 import 'package:narration_engine/src/openrouter/openrouter_narration_model.dart';
-import 'package:narration_engine/src/openrouter/openrouter_scene_interpreter.dart';
 import 'package:narration_engine/src/openrouter/openrouter_speech_synthesizer.dart';
 import 'package:narration_engine/src/openrouter/openrouter_voice_option.dart';
 import 'package:test/test.dart';
@@ -21,17 +20,20 @@ void main() {
         protagonistHint: 'the foreground camera holder',
       );
 
-      final observation = await OpenRouterSceneInterpreter(client: api)
-          .interpret([capture]);
       final draft =
           await OpenRouterNarrationModel(
             client: api,
             requireSpokenLine: true,
             includeCaptures: true,
+            continuous: true,
+            maximumWords: 20,
           ).narrate(
             NarrationRequest(
               prompt: 'A test prompt',
-              observation: observation,
+              observation: const SceneObservation(
+                description: 'The latest live camera frame.',
+                fingerprint: 'live-frame',
+              ),
               captures: [capture],
               memory: const NarrativeMemorySnapshot(),
             ),
@@ -39,11 +41,15 @@ void main() {
       final track = await OpenRouterSpeechSynthesizer(client: api)
           .synthesize(draft.text!);
 
-      expect(api.responseBodies.first['model'], 'openai/gpt-4.1-mini');
-      expect(api.responseBodies.first['max_output_tokens'], 500);
-      expect(api.responseBodies[1]['model'], 'openai/gpt-5.6-sol');
-      expect(api.responseBodies[1]['max_output_tokens'], 400);
-      final narrationInput = api.responseBodies[1]['input'] as List;
+      final narrationBody = api.responseBodies.single;
+      expect(narrationBody['model'], 'openai/gpt-5.6-sol');
+      expect(narrationBody['max_output_tokens'], 150);
+      expect(narrationBody['reasoning'], {'effort': 'none'});
+      expect(
+        narrationBody['instructions'],
+        contains('10 to 20 words in one concise sentence'),
+      );
+      final narrationInput = narrationBody['input'] as List;
       final narrationContent =
           (narrationInput.single as Map)['content'] as List;
       final narrationImage = narrationContent.whereType<Map>().singleWhere(
@@ -103,12 +109,6 @@ void main() {
   });
 }
 
-String _schemaName(Map<String, Object?> body) {
-  final text = body['text'] as Map;
-  final format = text['format'] as Map;
-  return format['name'] as String;
-}
-
 final class _FakeOpenRouterApi implements OpenAiApi {
   final List<Map<String, Object?>> responseBodies = [];
   final List<Map<String, Object?>> speechBodies = [];
@@ -116,17 +116,6 @@ final class _FakeOpenRouterApi implements OpenAiApi {
   @override
   Future<Map<String, Object?>> createResponse(Map<String, Object?> body) async {
     responseBodies.add(body);
-    if (_schemaName(body) == 'scene_observation') {
-      return {
-        'output_text':
-            '{"description":"A person turns while seated.",'
-            '"fingerprint":"desk-turning","salience":0.6,'
-            '"setting":"room","action":"turning",'
-            '"visible_subjects":"one person",'
-            '"temporal_change":"the person turns",'
-            '"focal_capture_id":"10.jpg"}',
-      };
-    }
     return {
       'output_text':
           '{"action":"speak","text":"The campaign advances by inches.",'

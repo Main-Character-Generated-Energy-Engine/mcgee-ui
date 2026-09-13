@@ -31,7 +31,6 @@ Future<File> writeWebcamManifest({
   required Directory outputDirectory,
   required List<CapturedImage> captures,
   required NarrationOutcome outcome,
-  required String visionModel,
   required String narrationModel,
   required String speechModel,
   required String voice,
@@ -65,7 +64,7 @@ Future<File> writeWebcamManifest({
     ],
     'generation': {
       'provider': provider,
-      'vision_model': visionModel,
+      'vision_model': narrationModel,
       'narration_model': narrationModel,
       'speech_model': speechModel,
       'voice': voice,

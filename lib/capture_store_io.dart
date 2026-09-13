@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:path_provider/path_provider.dart';
 
+import 'capture_image_optimizer.dart';
 import 'capture_store_types.dart';
 
 Future<CaptureStore> createCaptureStore() async {
@@ -20,11 +21,11 @@ final class _IoCaptureStore implements CaptureStore {
   @override
   Future<StoredCapture> save({
     required int timestamp,
-    required String sourcePath,
     required Future<Uint8List> Function() readBytes,
   }) async {
     final destination = File('${directory.path}/$timestamp.jpg');
-    await File(sourcePath).copy(destination.path);
+    final optimized = await optimizeCaptureBytes(await readBytes());
+    await destination.writeAsBytes(optimized, flush: true);
     return StoredCapture(path: destination.path);
   }
 }

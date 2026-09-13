@@ -66,17 +66,19 @@ lines, and fictional canon.
 final openRouter = OpenRouterHttpClient(apiKey: keySuppliedByTheHost);
 
 final engine = NarrationEngine(
-  sceneInterpreter: OpenRouterSceneInterpreter(client: openRouter),
-  narrator: OpenRouterNarrationModel(client: openRouter),
+  sceneInterpreter: const DirectCaptureInterpreter(),
+  narrator: OpenRouterNarrationModel(
+    client: openRouter,
+    includeCaptures: true,
+  ),
   speechSynthesizer: OpenRouterSpeechSynthesizer(client: openRouter),
   audioOutput: hostAudioOutput,
 );
 ```
 
-The current defaults are:
+The current provider defaults are:
 
-- Vision: `openai/gpt-4.1-mini`
-- Comedy/editorial writing: `openai/gpt-5.6-sol`
+- Multimodal narration: `openai/gpt-5.6-sol`
 - Speech: `fish-audio/s2.1-pro`
 - Voice: `morgan-freeman`
 
@@ -153,7 +155,9 @@ switch (outcome.kind) {
 Silence is a successful result, not an error. The default policy suppresses stale,
 low-salience, unchanged, overly frequent, overly long, and repetitive narration.
 If `submit` is called while another submission is running, the new submission is
-returned as silent instead of being queued.
+returned as silent by default. Live hosts can set `coalesceWhileBusy: true` to
+retain one replaceable pending submission so the next pass uses the newest
+capture without creating a stale queue.
 
 Use capture timestamps close to the current time for the live engine. The default
 maximum observation age is 30 seconds. Set

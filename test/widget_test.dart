@@ -16,43 +16,69 @@ void main() {
     expect(find.text('MCGEE'), findsOneWidget);
   });
 
-  testWidgets('accepts an OpenRouter key without a framework exception', (
-    tester,
-  ) async {
-    await tester.pumpWidget(const MainApp());
-    await tester.pump();
-    for (var attempt = 0; attempt < 50; attempt++) {
-      final narratorButton = find.byKey(const ValueKey('narrator-key-button'));
-      final buttonIsEnabled =
-          narratorButton.evaluate().isNotEmpty &&
-          tester.widget<IconButton>(narratorButton).onPressed != null;
-      final keyUiIsReady =
-          find.text('Connect OpenRouter').evaluate().isNotEmpty ||
-          buttonIsEnabled;
-      if (keyUiIsReady) break;
-      await tester.runAsync(
-        () => Future<void>.delayed(const Duration(milliseconds: 50)),
+  testWidgets(
+    'starts with narrator setup and advances when Enter is pressed',
+    (tester) async {
+      await tester.pumpWidget(const MainApp());
+      await tester.pump();
+
+      expect(find.bySemanticsLabel('MCgEe'), findsOneWidget);
+      expect(find.byKey(const ValueKey('enable-camera-button')), findsNothing);
+      final morganAvatar = find.byKey(
+        const ValueKey('setup-actor-Morgan Freeman'),
       );
+      final eveAvatar = find.byKey(const ValueKey('setup-actor-Eve'));
+      expect(morganAvatar, findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('setup-actor-David Attenborough')),
+        findsOneWidget,
+      );
+      expect(eveAvatar, findsOneWidget);
+      expect(
+        tester.widget<Semantics>(morganAvatar).properties.selected,
+        isTrue,
+      );
+      final avatarAssets = tester
+          .widgetList<Image>(find.byType(Image))
+          .map((widget) => (widget.image as AssetImage).assetName);
+      expect(
+        avatarAssets,
+        containsAll(<String>[
+          'lib/assets/morgan-avatar.webp',
+          'lib/assets/david-avatar.webp',
+          'lib/assets/eve-avatar.webp',
+        ]),
+      );
+
+      await tester.tap(eveAvatar);
+      await tester.pump();
+      expect(tester.widget<Semantics>(eveAvatar).properties.selected, isTrue);
+
+      final keyField = find.byKey(const ValueKey('openrouter-key-field'));
+      final field = tester.widget<EditableText>(
+        find.descendant(of: keyField, matching: find.byType(EditableText)),
+      );
+      expect(field.maxLines, 1);
+      expect(field.expands, isFalse);
+      expect(field.autofillHints, isNull);
+
+      await tester.enterText(keyField, 'sk-or-test');
+      tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pump();
       await tester.pump(const Duration(milliseconds: 100));
-    }
 
-    if (find.text('Connect OpenRouter').evaluate().isEmpty) {
-      final narratorButton = tester.widget<IconButton>(
-        find.byKey(const ValueKey('narrator-key-button')),
+      expect(tester.takeException(), isNull);
+      expect(find.text('Your story is waiting.'), findsOneWidget);
+      expect(
+        find.textContaining('Eve has cleared their throat'),
+        findsOneWidget,
       );
-      narratorButton.onPressed!();
-      await tester.pump(const Duration(milliseconds: 300));
-    }
+      expect(
+        find.byKey(const ValueKey('enable-camera-button')),
+        findsOneWidget,
+      );
 
-    expect(find.text('Connect OpenRouter'), findsOneWidget);
-    await tester.enterText(find.byType(TextFormField), 'sk-or-test');
-    await tester.tap(find.widgetWithText(FilledButton, 'Connect'));
-    await tester.pump();
-
-    expect(tester.takeException(), isNull);
-    await tester.pump(const Duration(milliseconds: 300));
-    expect(tester.takeException(), isNull);
-
-    await tester.pumpWidget(const SizedBox.shrink());
-  });
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
 }

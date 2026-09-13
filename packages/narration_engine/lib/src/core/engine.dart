@@ -21,6 +21,7 @@ final class NarrationEngine {
     Clock? clock,
     this.maxCapturesPerObservation = 4,
     this.prefetchDuringPlayback = false,
+    this.coalesceWhileBusy = false,
   }) : assert(maxCapturesPerObservation > 0),
        _sceneInterpreter = sceneInterpreter,
        _narrator = narrator,
@@ -47,27 +48,36 @@ final class NarrationEngine {
   /// build an increasingly stale playback queue.
   final bool prefetchDuringPlayback;
 
+  /// Retains only the newest submission received during model or TTS work.
+  ///
+  /// This is useful for live cameras: the next preparation starts from the
+  /// freshest available frame instead of dropping every frame received while
+  /// a provider request is in flight.
+  final bool coalesceWhileBusy;
+
   final StreamController<NarrationEngineEvent> _events =
       StreamController<NarrationEngineEvent>.broadcast(sync: true);
 
-  int? _busyGeneration;
+  Object? _activePreparation;
   bool _closed = false;
   int _generation = 0;
   DateTime? _lastPlaybackFinishedAt;
   _QueuedNarration? _activeNarration;
   _QueuedNarration? _pendingNarration;
+  _PendingSubmission? _pendingSubmission;
   bool _playbackLoopRunning = false;
   bool _isPlayingAudio = false;
 
   Stream<NarrationEngineEvent> get events => _events.stream;
   NarrativeMemorySnapshot get memory => _memory.snapshot;
   bool get isBusy =>
-      _busyGeneration == _generation ||
+      _activePreparation != null ||
+      _pendingSubmission != null ||
       _activeNarration != null ||
       _pendingNarration != null;
   bool get isPlaying => _isPlayingAudio;
 
-  /// Processes the newest bounded window, dropping a submission if busy.
+  /// Processes the newest bounded window.
   ///
   /// Capture timestamps determine ordering. The newest timestamp is propagated
   /// as `observedAt` on every outcome and event.
@@ -87,14 +97,40 @@ final class NarrationEngine {
     );
     final observedAt = window.last.capturedAt;
 
-    if (_busyGeneration == _generation ||
-        (!prefetchDuringPlayback &&
-            (_activeNarration != null || _pendingNarration != null))) {
+    if (_activePreparation != null) {
+      if (coalesceWhileBusy) {
+        final pending = _PendingSubmission(
+          captures: window,
+          observedAt: observedAt,
+          generation: _generation,
+        );
+        final replaced = _pendingSubmission;
+        _pendingSubmission = pending;
+        if (replaced != null) {
+          _completePendingSubmission(
+            replaced,
+            'A newer capture arrived before preparation began.',
+          );
+        }
+        return pending.completed.future;
+      }
+      return _skip(window, observedAt, SilenceReason.busy.message);
+    }
+    if (!prefetchDuringPlayback &&
+        (_activeNarration != null || _pendingNarration != null)) {
       return _skip(window, observedAt, SilenceReason.busy.message);
     }
 
+    return _prepareSubmission(window, observedAt);
+  }
+
+  Future<NarrationOutcome> _prepareSubmission(
+    List<CapturedImage> window,
+    DateTime observedAt,
+  ) async {
     final operationGeneration = _generation;
-    _busyGeneration = operationGeneration;
+    final preparationToken = Object();
+    _activePreparation = preparationToken;
     try {
       final now = _clock();
       final lastPlaybackFinishedAt = _lastPlaybackFinishedAt;
@@ -179,7 +215,7 @@ final class NarrationEngine {
         generation: operationGeneration,
       );
       _enqueue(queued);
-      _releasePreparation(operationGeneration);
+      _releasePreparation(preparationToken);
       return await queued.completed.future;
     } catch (error) {
       if (!_isCurrent(operationGeneration)) {
@@ -190,7 +226,7 @@ final class NarrationEngine {
       );
       return NarrationOutcome.failed(observedAt: observedAt, error: error);
     } finally {
-      _releasePreparation(operationGeneration);
+      _releasePreparation(preparationToken);
     }
   }
 
@@ -208,12 +244,13 @@ final class NarrationEngine {
 
     final observedAt = _clock();
     const captures = <CapturedImage>[];
-    if (_busyGeneration == _generation) {
+    if (_activePreparation != null) {
       return _skip(captures, observedAt, SilenceReason.busy.message);
     }
 
     final operationGeneration = _generation;
-    _busyGeneration = operationGeneration;
+    final preparationToken = Object();
+    _activePreparation = preparationToken;
     try {
       final track = await _speechSynthesizer.synthesize(spokenText);
       if (!_isCurrent(operationGeneration)) {
@@ -230,7 +267,7 @@ final class NarrationEngine {
         generation: operationGeneration,
       );
       _enqueue(queued);
-      _releasePreparation(operationGeneration);
+      _releasePreparation(preparationToken);
       return await queued.completed.future;
     } catch (error) {
       if (!_isCurrent(operationGeneration)) {
@@ -245,14 +282,28 @@ final class NarrationEngine {
       );
       return NarrationOutcome.failed(observedAt: observedAt, error: error);
     } finally {
-      _releasePreparation(operationGeneration);
+      _releasePreparation(preparationToken);
     }
   }
 
-  void _releasePreparation(int operationGeneration) {
-    if (_busyGeneration == operationGeneration) {
-      _busyGeneration = null;
+  void _releasePreparation(Object preparationToken) {
+    if (!identical(_activePreparation, preparationToken)) return;
+    _activePreparation = null;
+
+    final pending = _pendingSubmission;
+    _pendingSubmission = null;
+    if (pending == null) return;
+    if (!_isCurrent(pending.generation)) {
+      _completePendingSubmission(pending, 'The engine was stopped.');
+      return;
     }
+    unawaited(
+      _prepareSubmission(pending.captures, pending.observedAt).then((outcome) {
+        if (!pending.completed.isCompleted) {
+          pending.completed.complete(outcome);
+        }
+      }),
+    );
   }
 
   void _enqueue(_QueuedNarration narration) {
@@ -402,10 +453,25 @@ final class NarrationEngine {
     );
   }
 
+  void _completePendingSubmission(
+    _PendingSubmission submission,
+    String reason,
+  ) {
+    if (submission.completed.isCompleted) return;
+    submission.completed.complete(
+      _skip(submission.captures, submission.observedAt, reason),
+    );
+  }
+
   /// Invalidates in-flight work and stops active audio.
   Future<void> stop({bool clearMemory = false}) async {
     _generation += 1;
-    _busyGeneration = null;
+    _activePreparation = null;
+    final pendingSubmission = _pendingSubmission;
+    _pendingSubmission = null;
+    if (pendingSubmission != null) {
+      _completePendingSubmission(pendingSubmission, 'The engine was stopped.');
+    }
     final pending = _pendingNarration;
     _pendingNarration = null;
     if (pending != null) {
@@ -454,6 +520,19 @@ final class NarrationEngine {
       _events.add(event);
     }
   }
+}
+
+final class _PendingSubmission {
+  _PendingSubmission({
+    required this.captures,
+    required this.observedAt,
+    required this.generation,
+  });
+
+  final List<CapturedImage> captures;
+  final DateTime observedAt;
+  final int generation;
+  final Completer<NarrationOutcome> completed = Completer<NarrationOutcome>();
 }
 
 final class _QueuedNarration {

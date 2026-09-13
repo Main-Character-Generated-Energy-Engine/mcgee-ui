@@ -19,13 +19,13 @@ keeps the key in memory for the current page only. It does not print it, store
 it in browser storage, package it as an asset, or compile it into the web
 bundle.
 
-The browser samples one JPEG every two seconds and submits the newest frame
-immediately. The live path sends that frame straight to the narration model,
-avoiding both the old three-frame/ten-second warm-up and a separate sequential
-vision request. Spoken MP3 bytes are played through the host's `AudioOutput`
-adapter, and the line is also shown as a subtitle. While a passage plays, the
-engine prepares from newer frames and retains only the newest ready passage, so
-playback can continue without building a stale queue.
+The browser samples one JPEG every two seconds, resizes it to a 512-pixel
+longest edge, and encodes it at JPEG quality 65 before submission. The live path
+sends that frame straight to the narration model, avoiding both the old
+three-frame/ten-second warm-up and a separate sequential vision request. While
+preparation is busy, newer frames collapse into one latest-frame slot. Spoken
+MP3 bytes are played through the host's `AudioOutput` adapter, and the line is
+also shown as a subtitle.
 
 Browser captures remain in memory because a web page cannot write the host file
 contract directly. IO hosts use application support storage and save:
@@ -56,10 +56,11 @@ windows. It should call `stop()` when the app lifecycle suspends capture and
 `close()` at teardown.
 Do not move camera ownership or audio playback into the package.
 
-The package adapters default to OpenRouter vision `openai/gpt-4.1-mini` and
-comedy/editorial model `openai/gpt-5.6-sol`. The low-latency live path uses Sol
-as a multimodal writer in one pass. Speech defaults to Fish Audio S2.1 Pro with
-the Morgan Freeman preset.
+The package adapters default to `openai/gpt-5.6-sol`, used as a multimodal
+writer in one pass with reasoning disabled for latency. Live passages are one
+10–20-word sentence and are discarded when their source frame is more than six
+seconds old. Speech defaults to Fish Audio S2.1 Pro with the Morgan Freeman
+preset.
 The host exposes exactly three narrator choices:
 
 ```dart
