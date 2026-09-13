@@ -11,18 +11,21 @@ final class OpenRouterNarrationModel implements NarrationModel {
     this.requireSpokenLine = false,
     this.continuous = false,
     this.maximumWords = 24,
+    this.includeCaptures = false,
   }) : _delegate = OpenAiNarrationModel(
          client: client,
          model: model,
          requireSpokenLine: requireSpokenLine,
          continuous: continuous,
          maximumWords: maximumWords,
+         includeCaptures: includeCaptures,
        );
 
   final String model;
   final bool requireSpokenLine;
   final bool continuous;
   final int maximumWords;
+  final bool includeCaptures;
   final OpenAiNarrationModel _delegate;
 
   @override

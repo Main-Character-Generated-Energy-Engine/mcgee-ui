@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import '../core/contracts.dart';
 import '../core/models.dart';
+import 'capture_path_reader.dart';
 import 'openai_http_client.dart';
 import 'openai_response_parsing.dart';
 
@@ -12,6 +13,7 @@ final class OpenAiNarrationModel implements NarrationModel {
     this.requireSpokenLine = false,
     this.continuous = false,
     this.maximumWords = 24,
+    this.includeCaptures = false,
   }) : assert(maximumWords > 0);
 
   final OpenAiApi client;
@@ -19,6 +21,10 @@ final class OpenAiNarrationModel implements NarrationModel {
   final bool requireSpokenLine;
   final bool continuous;
   final int maximumWords;
+
+  /// Adds the request's images to the narration prompt so a multimodal model
+  /// can interpret and narrate them in one provider round trip.
+  final bool includeCaptures;
 
   @override
   Future<NarrationDraft> narrate(NarrationRequest request) async {
@@ -46,7 +52,9 @@ Return an empty text when choosing silence. Motifs are terse labels for comic
 devices used. Canon updates must be fictional continuity worth remembering
 later, and should usually be empty.
 ''',
-      'input': request.prompt,
+      'input': includeCaptures
+          ? await _inputWithCaptures(request)
+          : request.prompt,
       'text': {
         'format': {
           'type': 'json_schema',
@@ -91,6 +99,55 @@ later, and should usually be empty.
     }
     return draft;
   }
+}
+
+Future<List<Map<String, Object?>>> _inputWithCaptures(
+  NarrationRequest request,
+) async {
+  if (request.captures.isEmpty) {
+    throw ArgumentError.value(
+      request.captures,
+      'request.captures',
+      'Must not be empty when includeCaptures is enabled.',
+    );
+  }
+
+  final captures = request.captures.toList()
+    ..sort((left, right) => left.capturedAt.compareTo(right.capturedAt));
+  final content = <Map<String, Object?>>[
+    {'type': 'input_text', 'text': request.prompt},
+  ];
+  for (final capture in captures) {
+    final bytes = capture.bytes ?? await readCapturePath(capture.path!);
+    final protagonistHint = capture.protagonistHint?.trim();
+    final focalGuidance = protagonistHint == null || protagonistHint.isEmpty
+        ? ''
+        : ' Treat $protagonistHint as the focal protagonist.';
+    content
+      ..add({
+        'type': 'input_text',
+        'text':
+            'Live capture ${capture.id}, observed at '
+            '${capture.capturedAt.toUtc().toIso8601String()}.'
+            '$focalGuidance',
+      })
+      ..add({
+        'type': 'input_image',
+        'detail': 'low',
+        'image_url':
+            'data:${_captureMediaType(capture)};base64,${base64Encode(bytes)}',
+      });
+  }
+  return <Map<String, Object?>>[
+    {'role': 'user', 'content': content},
+  ];
+}
+
+String _captureMediaType(CapturedImage capture) {
+  final path = capture.path?.toLowerCase() ?? '';
+  if (path.endsWith('.png')) return 'image/png';
+  if (path.endsWith('.webp')) return 'image/webp';
+  return 'image/jpeg';
 }
 
 NarrationDraft parseNarrationDraft(Map<String, Object?> response) {

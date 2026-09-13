@@ -61,12 +61,12 @@ class _CameraCapturePageState extends State<CameraCapturePage>
   OpenRouterNarrationRuntime? _narrationRuntime;
   String? _error;
   String? _visibleNarrationPhrase;
-  bool _isRecording = false;
   bool _isCapturing = false;
   bool _isInitializingCamera = false;
   bool _isAppActive = true;
   bool _isSelectingKey = false;
   bool _narrationUnavailable = false;
+  bool _hasStartedNarrationAudio = false;
   bool _isNarrationPlaying = false;
   String _selectedActor = 'Morgan Freeman';
   AudioPlayer? _switchSoundPlayer;
@@ -77,6 +77,11 @@ class _CameraCapturePageState extends State<CameraCapturePage>
     'David Attenborough': OpenRouterVoiceOption.davidAttenborough,
     'Jade': OpenRouterVoiceOption.jade,
   };
+
+  void _printError(String context, Object error, [StackTrace? stackTrace]) {
+    final trace = stackTrace == null ? '' : '\n$stackTrace';
+    debugPrint('[MCGEE] $context: $error$trace');
+  }
 
   @override
   void initState() {
@@ -119,7 +124,9 @@ class _CameraCapturePageState extends State<CameraCapturePage>
 
       final controller = CameraController(
         cameras.first,
-        ResolutionPreset.high,
+        // Medium frames are ample for low-detail model vision and materially
+        // reduce capture encoding and upload time on the live path.
+        ResolutionPreset.medium,
         enableAudio: false,
       );
       await controller.initialize();
@@ -133,17 +140,18 @@ class _CameraCapturePageState extends State<CameraCapturePage>
         _controller = controller;
         _captureStore = captureStore;
         _error = null;
-        _isRecording = true;
       });
       _entryController.forward(from: 0);
       _startCaptureLoop(captureImmediately: true);
-    } on CameraException catch (exception) {
+    } on CameraException catch (exception, stackTrace) {
+      _printError('Camera initialization failed', exception, stackTrace);
       if (mounted) {
         setState(() {
           _error = exception.description ?? exception.code;
         });
       }
-    } catch (exception) {
+    } catch (exception, stackTrace) {
+      _printError('App initialization failed', exception, stackTrace);
       if (mounted) {
         setState(() {
           _error = exception.toString();
@@ -154,28 +162,13 @@ class _CameraCapturePageState extends State<CameraCapturePage>
     }
   }
 
-  void _togglePause() {
-    if (_isRecording) {
-      _captureTimer?.cancel();
-      unawaited(_narrationRuntime?.stop());
-      setState(() {
-        _isRecording = false;
-        _isNarrationPlaying = false;
-      });
-      return;
-    }
-
-    setState(() => _isRecording = true);
-    _startCaptureLoop(captureImmediately: true);
-  }
-
   void _startCaptureLoop({required bool captureImmediately}) {
     _captureTimer?.cancel();
     if (captureImmediately) {
       _capturePhoto();
     }
     _captureTimer = Timer.periodic(
-      const Duration(seconds: 5),
+      const Duration(seconds: 2),
       (_) => _capturePhoto(),
     );
   }
@@ -196,7 +189,8 @@ class _CameraCapturePageState extends State<CameraCapturePage>
       await player.play(
         BytesSource(_switchSoundBytes!, mimeType: 'audio/mpeg'),
       );
-    } catch (_) {
+    } catch (error, stackTrace) {
+      _printError('Actor switch sound failed', error, stackTrace);
       // Audio feedback is optional; actor selection should still work.
     }
   }
@@ -227,10 +221,13 @@ class _CameraCapturePageState extends State<CameraCapturePage>
         isUtc: true,
       );
       unawaited(_narrateCapture(capture, capturedAt));
-    } on CameraException catch (exception) {
+    } on CameraException catch (exception, stackTrace) {
+      _printError('Camera capture failed', exception, stackTrace);
       if (mounted) {
         setState(() => _error = exception.description ?? exception.code);
       }
+    } catch (error, stackTrace) {
+      _printError('Capture storage failed', error, stackTrace);
     } finally {
       _isCapturing = false;
     }
@@ -252,13 +249,12 @@ class _CameraCapturePageState extends State<CameraCapturePage>
           !identical(runtime, _narrationRuntime)) {
         return;
       }
-      setState(() {
-        _narrationUnavailable = outcome.kind == NarrationOutcomeKind.failed;
-      });
-    } catch (_) {
-      if (mounted && identical(runtime, _narrationRuntime)) {
-        setState(() => _narrationUnavailable = true);
+      if (outcome.kind == NarrationOutcomeKind.spoken &&
+          _narrationUnavailable) {
+        setState(() => _narrationUnavailable = false);
       }
+    } catch (error, stackTrace) {
+      _printError('Capture narration failed', error, stackTrace);
     }
   }
 
@@ -271,7 +267,12 @@ class _CameraCapturePageState extends State<CameraCapturePage>
       if (tryDefaultFile) {
         try {
           key = await loadDefaultOpenRouterKey();
-        } catch (_) {
+        } catch (error, stackTrace) {
+          _printError(
+            'Default OpenRouter key could not be loaded',
+            error,
+            stackTrace,
+          );
           fallbackMessage =
               'The key in .secrets/openrouter-key could not be used.';
         }
@@ -288,7 +289,8 @@ class _CameraCapturePageState extends State<CameraCapturePage>
           audioOutput: audioOutput,
           voice: _actors[_selectedActor]!,
         );
-      } catch (_) {
+      } catch (error, stackTrace) {
+        _printError('Narration runtime creation failed', error, stackTrace);
         await audioOutput.dispose();
         rethrow;
       }
@@ -306,10 +308,14 @@ class _CameraCapturePageState extends State<CameraCapturePage>
         _narrationRuntime = runtime;
         _audioOutput = audioOutput;
         _narrationUnavailable = false;
+        _hasStartedNarrationAudio = false;
         _isNarrationPlaying = false;
       });
       _narrationEventSubscription = runtime.events.listen((event) {
         if (!mounted || !identical(runtime, _narrationRuntime)) return;
+        if (event case NarrationFailed(:final error)) {
+          _printError('Narration engine failed', error);
+        }
         final isPlaying = runtime.isPlaying;
         final visiblePhrase = switch (event) {
           NarrationStarted(:final text) => _estimatedSubtitlePhrase(
@@ -321,11 +327,18 @@ class _CameraCapturePageState extends State<CameraCapturePage>
             _estimatedSubtitlePhrase(text, position, duration),
           _ => null,
         };
+        final soundRecovered =
+            event is NarrationStarted && _narrationUnavailable;
         if (_isNarrationPlaying != isPlaying ||
+            soundRecovered ||
             (visiblePhrase != null &&
                 visiblePhrase != _visibleNarrationPhrase)) {
           setState(() {
             _isNarrationPlaying = isPlaying;
+            if (event is NarrationStarted) {
+              _hasStartedNarrationAudio = true;
+              _narrationUnavailable = false;
+            }
             if (visiblePhrase != null) {
               _visibleNarrationPhrase = visiblePhrase;
             }
@@ -340,7 +353,8 @@ class _CameraCapturePageState extends State<CameraCapturePage>
           identical(runtime, _narrationRuntime)) {
         unawaited(_speakStartupLine(runtime));
       }
-    } catch (_) {
+    } catch (error, stackTrace) {
+      _printError('OpenRouter configuration failed', error, stackTrace);
       if (mounted) setState(() => _narrationUnavailable = true);
     } finally {
       if (mounted) setState(() => _isSelectingKey = false);
@@ -350,13 +364,21 @@ class _CameraCapturePageState extends State<CameraCapturePage>
   Future<void> _speakStartupLine(OpenRouterNarrationRuntime runtime) async {
     try {
       final outcome = await runtime.speakStartupLine();
+      if (outcome.kind == NarrationOutcomeKind.failed) {
+        _printError(
+          'Startup narration failed',
+          outcome.error ?? outcome.reason ?? 'Unknown narration error',
+        );
+      }
       if (mounted && identical(runtime, _narrationRuntime)) {
         setState(
           () => _narrationUnavailable =
-              outcome.kind == NarrationOutcomeKind.failed,
+              outcome.kind == NarrationOutcomeKind.failed &&
+              !_hasStartedNarrationAudio,
         );
       }
-    } catch (_) {
+    } catch (error, stackTrace) {
+      _printError('Startup narration failed', error, stackTrace);
       if (mounted && identical(runtime, _narrationRuntime)) {
         setState(() => _narrationUnavailable = true);
       }
@@ -477,43 +499,39 @@ class _CameraCapturePageState extends State<CameraCapturePage>
 
     return Scaffold(
       appBar: AppBar(toolbarHeight: 0),
-      body: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: isReady ? _togglePause : null,
-        child: ColoredBox(
-          color: Colors.black,
-          child: SafeArea(
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                Center(
-                  child: _buildEntryReveal(
-                    _previewEntry,
-                    _buildPreview(controller, isReady),
+      body: ColoredBox(
+        color: Colors.black,
+        child: SafeArea(
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              Center(
+                child: _buildEntryReveal(
+                  _previewEntry,
+                  _buildPreview(controller, isReady),
+                ),
+              ),
+              Positioned(
+                top: 12,
+                right: 12,
+                child: IconButton.filledTonal(
+                  key: const ValueKey('narrator-key-button'),
+                  onPressed: _isSelectingKey
+                      ? null
+                      : () => _configureOpenRouterKey(tryDefaultFile: false),
+                  tooltip: _narrationRuntime == null
+                      ? 'Connect narrator'
+                      : 'Change narrator key',
+                  icon: Icon(
+                    _narrationRuntime == null
+                        ? Icons.key_rounded
+                        : _narrationUnavailable
+                        ? Icons.volume_off_rounded
+                        : Icons.volume_up_rounded,
                   ),
                 ),
-                Positioned(
-                  top: 12,
-                  right: 12,
-                  child: IconButton.filledTonal(
-                    key: const ValueKey('narrator-key-button'),
-                    onPressed: _isSelectingKey
-                        ? null
-                        : () => _configureOpenRouterKey(tryDefaultFile: false),
-                    tooltip: _narrationRuntime == null
-                        ? 'Connect narrator'
-                        : 'Change narrator key',
-                    icon: Icon(
-                      _narrationRuntime == null
-                          ? Icons.key_rounded
-                          : _narrationUnavailable
-                          ? Icons.volume_off_rounded
-                          : Icons.volume_up_rounded,
-                    ),
-                  ),
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ),
@@ -591,12 +609,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
               ),
             ),
           ),
-          if (!_isRecording)
-            const Center(
-              child: Icon(Icons.pause_rounded, color: Colors.white70, size: 72),
-            ),
-          if (_isRecording &&
-              _narrationRuntime != null &&
+          if (_narrationRuntime != null &&
               !_narrationUnavailable &&
               !_isNarrationPlaying)
             Positioned(

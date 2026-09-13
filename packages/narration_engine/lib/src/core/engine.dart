@@ -343,6 +343,9 @@ final class NarrationEngine {
             text: narration.text,
           ),
         );
+        if (identical(_activeNarration, narration)) {
+          _activeNarration = null;
+        }
         if (!narration.completed.isCompleted) {
           narration.completed.complete(
             NarrationOutcome.spoken(
@@ -362,6 +365,9 @@ final class NarrationEngine {
               error: error,
             ),
           );
+          if (identical(_activeNarration, narration)) {
+            _activeNarration = null;
+          }
           if (!narration.completed.isCompleted) {
             narration.completed.complete(
               NarrationOutcome.failed(

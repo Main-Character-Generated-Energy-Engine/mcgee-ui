@@ -19,10 +19,13 @@ keeps the key in memory for the current page only. It does not print it, store
 it in browser storage, package it as an asset, or compile it into the web
 bundle.
 
-The browser samples one JPEG every five seconds. After three new frames, it
-submits the rolling window to the engine. The engine may speak or deliberately
-stay silent. Spoken MP3 bytes are played through the host's `AudioOutput`
-adapter, and the line is also shown as a subtitle.
+The browser samples one JPEG every two seconds and submits the newest frame
+immediately. The live path sends that frame straight to the narration model,
+avoiding both the old three-frame/ten-second warm-up and a separate sequential
+vision request. Spoken MP3 bytes are played through the host's `AudioOutput`
+adapter, and the line is also shown as a subtitle. While a passage plays, the
+engine prepares from newer frames and retains only the newest ready passage, so
+playback can continue without building a stale queue.
 
 Browser captures remain in memory because a web page cannot write the host file
 contract directly. IO hosts use application support storage and save:
@@ -32,26 +35,31 @@ captures/webcam/{unix-seconds}.jpg
 ```
 
 Use localhost or HTTPS: browser camera access requires a secure context.
+Runtime failures are printed to the browser/debug console with an `[MCGEE]`
+prefix, including provider HTTP errors and stack traces when available.
 
 ## Integration map
 
 - `packages/narration_engine/`: provider-neutral engine, OpenRouter adapters,
   offline generator, and package tests.
 - `lib/openrouter_runtime.dart`: the app's composition root. It owns one
-  long-lived engine and a rolling three-capture window.
+  long-lived engine and the low-latency single-frame narration path.
 - `lib/audio_output.dart`: `audioplayers` implementation of `AudioOutput`.
 - `lib/capture_store*.dart`: bytes in the browser; timestamped files on IO
   platforms.
-- `lib/main.dart`: camera lifecycle, five-second sampling, key entry, and
+- `lib/main.dart`: camera lifecycle, two-second sampling, key entry, and
   host UI only.
 
 The host should keep one engine for a session so narrative memory, fictional
 canon, repetition checks, pacing, and silence decisions survive between capture
-windows. It should call `stop()` when capture pauses and `close()` at teardown.
+windows. It should call `stop()` when the app lifecycle suspends capture and
+`close()` at teardown.
 Do not move camera ownership or audio playback into the package.
 
-Defaults are OpenRouter vision `openai/gpt-4.1-mini`, comedy/editorial model
-`openai/gpt-5.6-sol`, and Fish Audio S2.1 Pro with the Morgan Freeman preset.
+The package adapters default to OpenRouter vision `openai/gpt-4.1-mini` and
+comedy/editorial model `openai/gpt-5.6-sol`. The low-latency live path uses Sol
+as a multimodal writer in one pass. Speech defaults to Fish Audio S2.1 Pro with
+the Morgan Freeman preset.
 The host exposes exactly three narrator choices:
 
 ```dart

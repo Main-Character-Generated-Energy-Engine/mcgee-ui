@@ -30,10 +30,13 @@ final class OpenRouterNarrationRuntime {
     return OpenRouterNarrationRuntime._(
       client: client,
       engine: NarrationEngine(
-        sceneInterpreter: OpenRouterSceneInterpreter(client: client),
+        // The narration model sees the latest image directly. A local scene
+        // marker avoids a second, sequential vision request on the live path.
+        sceneInterpreter: const _LiveFrameInterpreter(),
         narrator: OpenRouterNarrationModel(
           client: client,
           requireSpokenLine: true,
+          includeCaptures: true,
           continuous: true,
           maximumWords: 70,
         ),
@@ -52,7 +55,9 @@ final class OpenRouterNarrationRuntime {
           maximumWords: 70,
           rejectRepeatedNarration: false,
         ),
-        maxCapturesPerObservation: 3,
+        maxCapturesPerObservation: 1,
+        // Prepare from fresh frames during playback. Only the newest ready
+        // passage survives, preventing a stale narration backlog.
         prefetchDuringPlayback: true,
       ),
       speechSynthesizer: speechSynthesizer,
@@ -62,7 +67,6 @@ final class OpenRouterNarrationRuntime {
   final OpenRouterHttpClient _client;
   final NarrationEngine _engine;
   final _SelectableSpeechSynthesizer _speechSynthesizer;
-  final List<CapturedImage> _recentCaptures = <CapturedImage>[];
   bool _closed = false;
 
   Stream<NarrationEngineEvent> get events => _engine.events;
@@ -78,18 +82,14 @@ final class OpenRouterNarrationRuntime {
     required DateTime capturedAt,
   }) async {
     if (_closed) throw StateError('The narration runtime is closed.');
-    _recentCaptures.add(
-      CapturedImage(
-        source: 'webcam',
-        capturedAt: capturedAt,
-        path: capture.path,
-        bytes: capture.bytes,
-        protagonistHint: 'the recurring foreground camera holder',
-      ),
+    final latestCapture = CapturedImage(
+      source: 'webcam',
+      capturedAt: capturedAt,
+      path: capture.path,
+      bytes: capture.bytes,
+      protagonistHint: 'the recurring foreground camera holder',
     );
-    if (_recentCaptures.length > 3) _recentCaptures.removeAt(0);
-    if (_recentCaptures.length < 3) return null;
-    return _engine.submit(List<CapturedImage>.unmodifiable(_recentCaptures));
+    return _engine.submit(<CapturedImage>[latestCapture]);
   }
 
   Future<void> stop() => _engine.stop();
@@ -104,6 +104,24 @@ final class OpenRouterNarrationRuntime {
     _closed = true;
     await _engine.close();
     _client.close();
+  }
+}
+
+/// Lightweight marker used by the live path. The vision-capable narration
+/// model performs the actual image interpretation and writing in one request.
+final class _LiveFrameInterpreter implements SceneInterpreter {
+  const _LiveFrameInterpreter();
+
+  @override
+  Future<SceneObservation> interpret(List<CapturedImage> captures) async {
+    final capture = captures.last;
+    return SceneObservation(
+      description: 'The latest live camera frame.',
+      fingerprint: 'live-frame:${capture.id}',
+      details: const <String, String>{
+        'instruction': 'Describe only what is visible in the attached frame.',
+      },
+    );
   }
 }
 

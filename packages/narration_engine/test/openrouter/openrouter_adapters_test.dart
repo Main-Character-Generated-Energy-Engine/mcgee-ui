@@ -27,6 +27,7 @@ void main() {
           await OpenRouterNarrationModel(
             client: api,
             requireSpokenLine: true,
+            includeCaptures: true,
           ).narrate(
             NarrationRequest(
               prompt: 'A test prompt',
@@ -42,6 +43,16 @@ void main() {
       expect(api.responseBodies.first['max_output_tokens'], 500);
       expect(api.responseBodies[1]['model'], 'openai/gpt-5.6-sol');
       expect(api.responseBodies[1]['max_output_tokens'], 400);
+      final narrationInput = api.responseBodies[1]['input'] as List;
+      final narrationContent =
+          (narrationInput.single as Map)['content'] as List;
+      final narrationImage = narrationContent.whereType<Map>().singleWhere(
+        (part) => part['type'] == 'input_image',
+      );
+      expect(
+        narrationImage['image_url'],
+        startsWith('data:image/jpeg;base64,'),
+      );
       expect(api.speechBodies.single, {
         'model': 'fish-audio/s2.1-pro',
         'voice': '3ad4d432023c47ee9e6c7805b973630a',
