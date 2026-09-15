@@ -361,6 +361,13 @@ void main() {
           narrator.requests.map((request) => request.captures.single.id),
           <String>['0', '2'],
         );
+        // Live drafts carry no structured canon. The actual spoken line must
+        // still reach the next coalesced request as its story context.
+        expect(
+          narrator.requests.last.memory.recentNarrations.single.text,
+          'Moment 0 advances.',
+        );
+        expect(narrator.requests.last.prompt, contains('Moment 0 advances.'));
         await engine.close();
       },
     );
@@ -486,7 +493,7 @@ void main() {
   });
 
   test(
-    'default prompt carries grave stakes, continuity, and recent context',
+    'default prompt carries visual grounding, continuity, and recent context',
     () {
       final builder = DocumentaryPromptBuilder(maximumWords: 24);
       final prompt = builder.build(
@@ -507,8 +514,8 @@ void main() {
       );
 
       expect(prompt, contains('at most 24 words'));
-      expect(prompt, contains('something grave is seconds away'));
-      expect(prompt, contains('secret intentions'));
+      expect(prompt, contains('Ground every line in the current capture'));
+      expect(prompt, contains('continue directly from the last spoken line'));
       expect(prompt.toLowerCase(), isNot(contains('silence')));
       expect(prompt, contains('kettle: an old rival'));
       expect(prompt, contains('Yesterday, the kettle won.'));

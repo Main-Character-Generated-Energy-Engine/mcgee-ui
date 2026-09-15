@@ -4,6 +4,7 @@ import {
   validatePayload,
   validateSpeechPayload,
 } from "./narrate_core.mjs";
+import { generateOpening } from "./film_opening.mjs";
 
 export default async function handler(request) {
   const cors = corsHeaders(request.headers.get("origin"));
@@ -18,6 +19,11 @@ export default async function handler(request) {
     };
     if (!options.openRouterApiKey) {
       throw new Error("OpenRouter is not configured on this deployment.");
+    }
+    if (body?.kind === "opening") {
+      return Response.json(await generateOpening(body, options), {
+        headers: { ...cors, "Cache-Control": "no-store" },
+      });
     }
     const result = body?.kind === "speech"
       ? await renderSpeech(validateSpeechPayload(body), options)

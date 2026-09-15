@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { narrationLanguageInstruction, narrationLanguageName } from "../netlify/functions/narration_language.mjs";
 
 import {
   decodeSse,
@@ -8,6 +9,31 @@ import {
   validateSpeechPayload,
   validatePayload,
 } from "../netlify/functions/narrate_core.mjs";
+
+test("all output languages use the same English live instructions", () => {
+  const instructions = [];
+  for (const code of ["en", "fr", "es", "it", "ca"]) {
+    const payload = validatePayload({
+      prompt: "Continue from: Els dits reposen sobre el teclat.",
+      voice: "jade",
+      language: code,
+      capture: {
+        capturedAt: "2026-09-13T12:00:00.000Z",
+        mediaType: "image/jpeg",
+        bytesBase64: Buffer.from([1, 2, 3]).toString("base64"),
+      },
+    });
+    const body = openRouterNarrationBody(payload);
+    assert.ok(body.instructions.includes(`only in ${narrationLanguageName(code)}`));
+    assert.match(body.instructions, /do not translate an English draft/);
+    assert.equal(body.input[0].content[0].text, payload.prompt);
+    instructions.push(body.instructions.replace(narrationLanguageInstruction(code), ""));
+  }
+  assert.equal(new Set(instructions).size, 1);
+  assert.equal(narrationLanguageName(), "English");
+  assert.throws(() => narrationLanguageName("de"));
+  assert.throws(() => narrationLanguageName("toString"));
+});
 
 test("validates server-side startup speech requests", () => {
   const payload = validateSpeechPayload({
@@ -54,7 +80,7 @@ test("validates and bounds the narration request", () => {
   });
   assert.equal(payload.voice.fishReference, "3ad4d432023c47ee9e6c7805b973630a");
   assert.equal(payload.languageCode, "fr");
-  assert.match(payload.languageInstruction, /français/);
+  assert.match(payload.languageInstruction, /only in French/);
   assert.deepEqual([...payload.capture.image], [1, 2, 3]);
   assert.throws(() => validatePayload({ ...payload, voice: "arbitrary" }));
   assert.throws(() => validatePayload({ ...payload, language: "de" }));
@@ -72,13 +98,20 @@ test("builds a latency-ranked low-detail multimodal request", () => {
     },
   });
   const body = openRouterNarrationBody(payload);
+  assert.equal(body.model, "openai/gpt-5.6-terra");
+  assert.deepEqual(body.reasoning, { effort: "high" });
+  assert.equal(body.max_output_tokens, 2000);
   assert.deepEqual(body.provider, { sort: "latency" });
   assert.equal(body.stream, true);
-  assert.match(body.instructions, /exclusivament en català/);
-  assert.match(body.instructions, /visible subject's invented thoughts/);
+  assert.match(body.instructions, /only in Catalan/);
+  assert.match(body.instructions, /Describe the visible action first/);
   assert.match(body.instructions, /exclusively in the third person/);
   assert.match(body.instructions, /never use first- or/);
   assert.match(body.instructions, /inner monologue only as indirect narration/);
+  assert.match(body.instructions, /The last spoken line is/);
+  assert.match(body.instructions, /Do not restart the premise/);
+  assert.match(body.instructions, /Never invent unseen/);
+  assert.equal(body.input[0].content[0].text, payload.prompt);
   assert.equal(body.input[0].content.at(-1).detail, "low");
   assert.match(body.input[0].content.at(-1).image_url, /^data:image\/jpeg;base64,/);
 });

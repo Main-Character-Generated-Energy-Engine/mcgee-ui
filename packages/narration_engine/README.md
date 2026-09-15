@@ -78,7 +78,7 @@ final engine = NarrationEngine(
 
 The current provider defaults are:
 
-- Multimodal narration: `openai/gpt-5.6-sol`
+- Multimodal narration: `openai/gpt-5.6-terra`
 - Speech: `fish-audio/s2.1-pro`
 - Voice: `morgan-freeman`
 

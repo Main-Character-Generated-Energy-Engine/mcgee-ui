@@ -19,7 +19,7 @@ final class FishAudioLiveSpeechSynthesizer
   FishAudioLiveSpeechSynthesizer({
     required String apiKey,
     required this.transport,
-    this.model = 's2.1-pro',
+    this.model = 's2-pro',
     this.voice = '3ad4d432023c47ee9e6c7805b973630a',
     this.latency = FishAudioLatency.low,
     this.chunkLength = 100,

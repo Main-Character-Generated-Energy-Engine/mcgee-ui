@@ -64,12 +64,15 @@ void main() {
           .synthesize(draft.text!);
 
       final narrationBody = api.responseBodies.single;
-      expect(narrationBody['model'], 'gpt-5.6-sol');
-      expect(narrationBody['max_output_tokens'], 150);
-      expect(narrationBody['reasoning'], {'effort': 'none'});
+      expect(narrationBody['model'], 'gpt-5.6-terra');
+      expect(narrationBody['max_output_tokens'], 2000);
+      expect(narrationBody['reasoning'], {'effort': 'high'});
       expect(narrationBody['store'], isFalse);
       expect(_schemaName(narrationBody), 'narration_decision');
-      expect(narrationBody['instructions'], contains('grandiloquent urgency'));
+      expect(
+        narrationBody['instructions'],
+        contains('Describe the visible action first'),
+      );
       expect(
         (narrationBody['instructions'] as String).toLowerCase(),
         isNot(contains('silence')),

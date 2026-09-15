@@ -6,6 +6,7 @@ import 'package:narration_engine/fish_audio.dart';
 import 'package:narration_engine/openrouter.dart';
 
 import 'capture_store.dart';
+import 'film_opening.dart';
 import 'netlify_narration_renderer.dart';
 
 /// Allows enough time for both multimodal writing and speech synthesis while
@@ -18,12 +19,12 @@ final class OpenRouterNarrationRuntime {
     required OpenRouterHttpClient client,
     required NarrationEngine engine,
     required _SelectableSpeechSynthesizer speechSynthesizer,
-    required String startupLine,
+    required NarrationLanguage language,
     NetlifyNarrationRenderer? netlifyRenderer,
   }) : _client = client,
        _engine = engine,
        _speechSynthesizer = speechSynthesizer,
-       _startupLine = startupLine,
+       _language = language,
        _netlifyRenderer = netlifyRenderer;
 
   factory OpenRouterNarrationRuntime({
@@ -96,7 +97,7 @@ final class OpenRouterNarrationRuntime {
             Duration(milliseconds: 500 + random.nextInt(1501)),
       ),
       speechSynthesizer: speechSynthesizer,
-      startupLine: language.startupLine,
+      language: language,
       netlifyRenderer: netlifyRenderer,
     );
   }
@@ -104,16 +105,34 @@ final class OpenRouterNarrationRuntime {
   final OpenRouterHttpClient _client;
   final NarrationEngine _engine;
   final _SelectableSpeechSynthesizer _speechSynthesizer;
-  final String _startupLine;
+  final NarrationLanguage _language;
   final NetlifyNarrationRenderer? _netlifyRenderer;
   bool _closed = false;
 
   Stream<NarrationEngineEvent> get events => _engine.events;
   bool get isPlaying => _engine.isPlaying;
 
-  Future<NarrationOutcome> speakStartupLine() {
+  Future<PreparedFilmOpening> prepareOpening({
+    required void Function(FilmOpening) onCredits,
+  }) async {
     if (_closed) throw StateError('The narration runtime is closed.');
-    return _engine.speak(_startupLine);
+    final opening = await (_netlifyRenderer?.generateOpening() ??
+        generateFilmOpening(_client, _language));
+    if (_closed) throw StateError('The narration runtime is closed.');
+    onCredits(opening);
+    final track = await _speechSynthesizer
+        .synthesize(opening.narration)
+        .timeout(const Duration(seconds: 20));
+    if (_closed) throw StateError('The narration runtime is closed.');
+    return PreparedFilmOpening(opening: opening, track: track);
+  }
+
+  Future<NarrationOutcome> speakOpening(PreparedFilmOpening opening) {
+    if (_closed) throw StateError('The narration runtime is closed.');
+    return _engine.speak(
+      opening.opening.narration,
+      preparedTrack: opening.track,
+    );
   }
 
   Future<NarrationOutcome?> addCapture({
@@ -206,7 +225,7 @@ final class _SelectableSpeechSynthesizer implements StreamingSpeechSynthesizer {
         final fishSynthesis = await FishAudioLiveSpeechSynthesizer(
           apiKey: credential,
           transport: transport,
-          model: 's2.1-pro-free',
+          model: 's2-pro',
           voice: voice.voiceId,
           latency: FishAudioLatency.low,
           flushAfterCharacters: 48,

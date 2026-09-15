@@ -1,17 +1,10 @@
 import { decode, encode } from "@msgpack/msgpack";
 import WebSocket from "ws";
+import { narrationLanguageInstruction, narrationLanguageName } from "./narration_language.mjs";
 
 const OPENROUTER_RESPONSES_URL = "https://openrouter.ai/api/v1/responses";
 const OPENROUTER_SPEECH_URL = "https://openrouter.ai/api/v1/audio/speech";
 const FISH_LIVE_URL = "wss://api.fish.audio/v1/tts/live";
-
-const LANGUAGES = Object.freeze({
-  en: "Write the narration only in English.",
-  fr: "Rédigez la narration uniquement en français.",
-  es: "Escribe la narración únicamente en español.",
-  it: "Scrivi la narrazione esclusivamente in italiano.",
-  ca: "Escriu la narració exclusivament en català.",
-});
 
 const VOICES = Object.freeze({
   "morgan-freeman": {
@@ -37,8 +30,7 @@ export function validatePayload(value) {
   const voice = VOICES[value.voice];
   if (!voice) throw new Error("Unsupported narrator voice.");
   const languageCode = typeof value.language === "string" ? value.language : "en";
-  const languageInstruction = LANGUAGES[languageCode];
-  if (!languageInstruction) throw new Error("Unsupported narration language.");
+  const languageInstruction = narrationLanguageInstruction(languageCode);
   const capture = value.capture;
   if (!capture || typeof capture !== "object") throw new Error("Missing capture.");
   const mediaType = capture.mediaType;
@@ -79,11 +71,11 @@ export function validatePayload(value) {
 export function validateSpeechPayload(value) {
   if (!value || typeof value !== "object") throw new Error("Expected a JSON object.");
   const text = typeof value.text === "string" ? value.text.trim() : "";
-  if (!text || text.length > 500) throw new Error("Invalid speech text.");
+  if (!text || text.length > 900) throw new Error("Invalid speech text.");
   const voice = VOICES[value.voice];
   if (!voice) throw new Error("Unsupported narrator voice.");
   const languageCode = typeof value.language === "string" ? value.language : "en";
-  if (!LANGUAGES[languageCode]) throw new Error("Unsupported narration language.");
+  narrationLanguageName(languageCode);
   return { text, voice, voiceName: value.voice, languageCode };
 }
 
@@ -218,28 +210,44 @@ export async function renderNarration(payload, options) {
 
 export function openRouterNarrationBody(payload) {
   const hint = payload.capture.protagonistHint
-    ? ` Treat ${payload.capture.protagonistHint} as the focal protagonist.`
+    ? ` Use ${payload.capture.protagonistHint} as focal guidance only when supported by the image.`
     : "";
   return {
-    model: "openai/gpt-5.6-sol",
-    reasoning: { effort: "none" },
-    max_output_tokens: 80,
+    model: "openai/gpt-5.6-terra",
+    reasoning: { effort: "high" },
+    // High reasoning effort consumes this same budget before visible text.
+    max_output_tokens: 2000,
     store: false,
     stream: true,
     provider: { sort: "latency" },
     instructions: `
-You are the final writer for a thunderous, cinematic natural-history epic about
-an ordinary person's day. Give every moment the gravity of an approaching
-reckoning. Always produce a spoken line. Write with grandiloquent urgency,
-precise detail, and the conviction that history may turn on the protagonist's
-next move. Narrate the visible subject's invented thoughts and motives alongside
-their actions or deliberate inaction, as a thriller-documentary voiceover.
+You are the cinematic narrator of one continuous natural-history epic about
+an ordinary person's day. Always produce a spoken line. Keep the grand,
+theatrical delivery, grounded in the current capture.
+Describe the visible action first: the subject, a concrete verb or posture,
+and a specific object or spatial detail. Most of the sentence must tell the
+listener what is actually happening in view. Inspect the image itself; capture
+markers and protagonist hints are not evidence of an action or a visible person.
+A single still image cannot prove a movement sequence. Never invent unseen
+actions, objects, reactions, outcomes, or off-camera events. If the image is
+unclear or no person is visible, describe the discernible scene without guessing.
+Read the supplied narration history oldest to newest. The last spoken line is
+the beat to continue: carry forward its activity, recurring object, or unresolved
+playful premise and let the current visible action advance, complicate, or
+resolve it. Do not restart the premise or reintroduce the protagonist each time.
+Recurring names and objects are useful continuity, not forbidden repetition.
+If little changes, continue the same activity through a visible detail without
+inventing escalation. If the scene changes, bridge to the new visible activity.
+Current visual evidence overrides earlier speculation; history is story context,
+not proof that an earlier action is still happening. If history is empty or only
+a generic introduction, establish the first concrete activity.
+Allow at most one brief, playful interpretation attached to that visible action.
+Imagined motives are a comic gloss, never visual facts. Avoid abstract destiny,
+new invented crises, and stock metaphors that could fit any unrelated image.
 Write the spoken line exclusively in the third person; never use first- or
 second-person narration. Render inner monologue only as indirect narration,
-never as the subject speaking or thinking in quotation. Invent boldly: assign
-secret intentions, impossible dilemmas, rivalries, betrayals, and
-civilization-scale stakes to ordinary acts.
-Avoid repetition and tired documentary clichés. The passage must contain 10 to
+never as the subject speaking or thinking in quotation.
+The passage must contain 10 to
 20 words in one commanding sentence, with no stage directions.
 ${payload.languageInstruction}
 Output only the exact words to
@@ -349,7 +357,7 @@ async function providerError(provider, response) {
 export function openFishSession({ apiKey, referenceId, WebSocketImpl = WebSocket }) {
   return new Promise((resolve, reject) => {
     const socket = new WebSocketImpl(FISH_LIVE_URL, {
-      headers: { Authorization: `Bearer ${apiKey}`, model: "s2.1-pro-free" },
+      headers: { Authorization: `Bearer ${apiKey}`, model: "s2-pro" },
     });
     let opened = false;
     const failBeforeOpen = (error) => {

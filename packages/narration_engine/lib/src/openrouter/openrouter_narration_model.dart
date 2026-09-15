@@ -4,11 +4,11 @@ import '../core/narration_language.dart';
 import '../openai/openai_http_client.dart';
 import '../openai/openai_narration_model.dart';
 
-/// Editorial/comedy pass using Sol through OpenRouter.
+/// Editorial/comedy pass using Terra through OpenRouter.
 final class OpenRouterNarrationModel implements StreamingNarrationModel {
   OpenRouterNarrationModel({
     required OpenAiApi client,
-    this.model = 'openai/gpt-5.6-sol',
+    this.model = 'openai/gpt-5.6-terra',
     this.requireSpokenLine = false,
     this.continuous = false,
     this.maximumWords = 24,

@@ -15,15 +15,16 @@ final class DirectCaptureInterpreter implements SceneInterpreter {
     }
     return SceneObservation(
       description:
-          'The attached captures are chronological evidence for an explicitly '
-          'fictional, high-stakes interpretation of the unfolding action.',
+          'Inspect the attached captures for the current visible action. '
+          'They are ordered oldest to newest; the latest image is authoritative.',
       fingerprint: 'direct-captures:${captures.last.id}',
       details: const <String, String>{
         'instruction':
-            'Use the images as dramatic evidence, then invent theatrical '
-            'thoughts and motives while narrating the subject’s actions or '
-            'deliberate inaction in exclusively third-person thriller '
-            'voiceover; render inner monologue only as indirect narration.',
+            'Describe the visible subject, concrete action or posture, and '
+            'an identifiable object or spatial detail. A single still image '
+            'does not establish a movement sequence. Do not invent unseen '
+            'actions. Connect this visible moment to the preceding narration; '
+            'keep any theatrical interpretation subordinate to the action.',
       },
     );
   }

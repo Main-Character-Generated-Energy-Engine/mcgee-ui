@@ -171,7 +171,7 @@ final class _Options {
       protagonistHint:
           values['--protagonist-hint'] ??
           'the recurring foreground camera holder',
-      narrationModel: values['--narration-model'] ?? 'openai/gpt-5.6-sol',
+      narrationModel: values['--narration-model'] ?? 'openai/gpt-5.6-terra',
       speechModel: speechModel,
       voiceName: voiceName,
       voiceId: voiceId,
@@ -189,7 +189,7 @@ Usage: dart run bin/generate_webcam_track.dart [options]
   --api-key-file PATH   API key file (default: .secrets/openrouter-key)
   --source NAME         Capture source stored in the manifest (default: webcam)
   --protagonist-hint H  Visual hint (default: recurring foreground camera holder)
-  --narration-model ID  Comedy model (default: openai/gpt-5.6-sol)
+  --narration-model ID  Comedy model (default: openai/gpt-5.6-terra)
   --speech-model ID     Speech model (default: fish-audio/s2.1-pro)
   --voice NAME          morgan-freeman, david-attenborough, jade, or a provider voice ID
 ''';

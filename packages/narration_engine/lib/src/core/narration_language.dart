@@ -5,7 +5,6 @@ enum NarrationLanguage {
     englishName: 'English',
     nativeName: 'English',
     startupLine: 'The hour has come. Destiny now turns on a single move.',
-    writerInstruction: 'Write the narration only in English.',
   ),
   french(
     apiValue: 'fr',
@@ -13,7 +12,6 @@ enum NarrationLanguage {
     nativeName: 'Français',
     startupLine:
         "L'heure est venue. Le destin tient désormais à un seul geste.",
-    writerInstruction: 'Rédigez la narration uniquement en français.',
   ),
   spanish(
     apiValue: 'es',
@@ -21,21 +19,18 @@ enum NarrationLanguage {
     nativeName: 'Español',
     startupLine:
         'Ha llegado la hora. El destino depende ahora de un solo movimiento.',
-    writerInstruction: 'Escribe la narración únicamente en español.',
   ),
   italian(
     apiValue: 'it',
     englishName: 'Italian',
     nativeName: 'Italiano',
     startupLine: "L'ora è giunta. Il destino dipende ormai da una sola mossa.",
-    writerInstruction: 'Scrivi la narrazione esclusivamente in italiano.',
   ),
   catalan(
     apiValue: 'ca',
     englishName: 'Catalan',
     nativeName: 'Català',
     startupLine: "Ha arribat l'hora. El destí depèn ara d'un sol moviment.",
-    writerInstruction: 'Escriu la narració exclusivament en català.',
   );
 
   const NarrationLanguage({
@@ -43,7 +38,6 @@ enum NarrationLanguage {
     required this.englishName,
     required this.nativeName,
     required this.startupLine,
-    required this.writerInstruction,
   });
 
   /// Stable value for API requests and persistence.
@@ -58,8 +52,12 @@ enum NarrationLanguage {
   /// Localized version of the short line spoken when narration starts.
   final String startupLine;
 
-  /// High-priority instruction for the provider-side final writing pass.
-  final String writerInstruction;
+  /// Shared English instruction selecting the language of the spoken output.
+  String get writerInstruction =>
+      'Write all spoken narration only in $englishName. '
+      'Compose directly in that language using natural idiom and spoken rhythm; '
+      'do not translate an English draft. Preserve the understated humour and '
+      'cinematic seriousness.';
 
   static NarrationLanguage fromApiValue(String value) {
     return NarrationLanguage.values.firstWhere(

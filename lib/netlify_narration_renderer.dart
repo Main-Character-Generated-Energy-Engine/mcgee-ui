@@ -5,6 +5,8 @@ import 'package:http/http.dart' as http;
 import 'package:narration_engine/narration_engine.dart';
 import 'package:narration_engine/openrouter.dart';
 
+import 'film_opening.dart';
+
 /// Calls the fused OpenRouter-to-Fish operation hosted as a Netlify Function.
 ///
 /// Provider credentials stay entirely inside the function environment.
@@ -21,6 +23,14 @@ final class NetlifyNarrationRenderer
   final http.Client _client;
   OpenRouterVoiceOption voice;
   final NarrationLanguage language;
+
+  Future<FilmOpening> generateOpening() async {
+    final response = await _post(<String, Object?>{
+      'kind': 'opening',
+      'language': language.apiValue,
+    });
+    return FilmOpening.fromJson(jsonDecode(utf8.decode(response.bodyBytes)));
+  }
 
   @override
   Future<RenderedNarration> render(NarrationRequest request) async {
@@ -68,16 +78,19 @@ final class NetlifyNarrationRenderer
   }
 
   Future<http.Response> _post(Map<String, Object?> payload) async {
+    final timeout = payload['kind'] == 'opening'
+        ? const Duration(seconds: 30)
+        : const Duration(seconds: 18);
     final response = await _client
         .post(
           endpoint,
           headers: const <String, String>{
             'Content-Type': 'application/json',
-            'Accept': 'audio/mpeg',
+            'Accept': 'audio/mpeg, application/json',
           },
           body: jsonEncode(payload),
         )
-        .timeout(const Duration(seconds: 18));
+        .timeout(timeout);
     if (response.statusCode < 200 || response.statusCode >= 300) {
       final message = utf8.decode(response.bodyBytes, allowMalformed: true);
       throw http.ClientException(

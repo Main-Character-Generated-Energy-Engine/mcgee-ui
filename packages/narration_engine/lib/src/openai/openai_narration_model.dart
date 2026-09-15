@@ -4,6 +4,7 @@ import 'dart:convert';
 import '../core/contracts.dart';
 import '../core/models.dart';
 import '../core/narration_language.dart';
+import '../core/writer_instructions.dart';
 import 'capture_path_reader.dart';
 import 'openai_http_client.dart';
 import 'openai_response_parsing.dart';
@@ -11,7 +12,7 @@ import 'openai_response_parsing.dart';
 final class OpenAiNarrationModel implements StreamingNarrationModel {
   const OpenAiNarrationModel({
     required this.client,
-    this.model = 'gpt-5.6-sol',
+    this.model = 'gpt-5.6-terra',
     this.requireSpokenLine = false,
     this.continuous = false,
     this.maximumWords = 24,
@@ -38,26 +39,18 @@ final class OpenAiNarrationModel implements StreamingNarrationModel {
         : 'A spoken line must be one sentence of at most $maximumWords words, with no stage directions.';
     final response = await client.createResponse({
       'model': model,
-      'reasoning': {'effort': 'none'},
-      'max_output_tokens': 150,
+      'reasoning': {'effort': 'high'},
+      // High reasoning effort consumes this same budget before visible text.
+      'max_output_tokens': 2000,
       'store': false,
       'instructions':
           '''
-You are the final writer for a thunderous, cinematic natural-history epic about
-an ordinary person's day. Give every moment the gravity of an approaching
-reckoning. Always produce a spoken line. Write with grandiloquent urgency,
-precise detail, and the conviction that history may turn on the protagonist's
-next move. Narrate the visible subject's invented thoughts and motives alongside
-their actions or deliberate inaction, as a thriller-documentary voiceover.
-Write the spoken line exclusively in the third person; never use first- or
-second-person narration. Render inner monologue only as indirect narration,
-never as the subject speaking or thinking in quotation. Invent boldly: assign
-secret intentions, impossible dilemmas, rivalries, betrayals, and
-civilization-scale stakes to ordinary acts.
-Avoid repetition and tired documentary clichés. ${language.writerInstruction}
+$documentaryWriterInstructions
+${language.writerInstruction}
 $formatInstruction Motifs are terse labels for dramatic devices used. Canon
-updates preserve invented rivalries, vows, threats, and consequences worth
-escalating later.
+updates preserve the ongoing activity, recurring objects, and unresolved story
+thread. Label playful interpretations as fiction; never store an imagined action
+or outcome as an observed fact.
 ''',
       'input': includeCaptures
           ? await _inputWithCaptures(request)
@@ -133,23 +126,14 @@ escalating later.
         : 'The line must be one sentence of at most $maximumWords words, with no stage directions.';
     final body = <String, Object?>{
       'model': model,
-      'reasoning': {'effort': 'none'},
-      'max_output_tokens': 80,
+      'reasoning': {'effort': 'high'},
+      // High reasoning effort consumes this same budget before visible text.
+      'max_output_tokens': 2000,
       'store': false,
       'instructions':
           '''
-You are the final writer for a thunderous, cinematic natural-history epic about
-an ordinary person's day. Give every moment the gravity of an approaching
-reckoning. Always produce a spoken line. Write with grandiloquent urgency,
-precise detail, and the conviction that history may turn on the protagonist's
-next move. Narrate the visible subject's invented thoughts and motives alongside
-their actions or deliberate inaction, as a thriller-documentary voiceover.
-Write the spoken line exclusively in the third person; never use first- or
-second-person narration. Render inner monologue only as indirect narration,
-never as the subject speaking or thinking in quotation. Invent boldly: assign
-secret intentions, impossible dilemmas, rivalries, betrayals, and
-civilization-scale stakes to ordinary acts.
-Avoid repetition and tired documentary clichés. ${language.writerInstruction}
+$documentaryWriterInstructions
+${language.writerInstruction}
 $formatInstruction
 Output only the exact words to speak, without quotation marks, a label, JSON,
 Markdown, commentary, or stage directions.
@@ -309,7 +293,7 @@ Future<List<Map<String, Object?>>> _inputWithCaptures(
     final protagonistHint = capture.protagonistHint?.trim();
     final focalGuidance = protagonistHint == null || protagonistHint.isEmpty
         ? ''
-        : ' Treat $protagonistHint as the focal protagonist.';
+        : ' Use $protagonistHint as focal guidance only when supported by the image.';
     content
       ..add({
         'type': 'input_text',

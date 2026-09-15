@@ -9,6 +9,29 @@ import 'package:narration_engine/narration_engine.dart';
 import 'package:narration_engine/openrouter.dart';
 
 void main() {
+  test('fetches opening credits without a camera or client-side credential', () async {
+    late Map<String, dynamic> payload;
+    final renderer = NetlifyNarrationRenderer(
+      endpoint: Uri.parse('https://example.test/api/narrate'),
+      voice: OpenRouterVoiceOption.jade,
+      language: NarrationLanguage.french,
+      client: MockClient((request) async {
+        expect(request.headers.containsKey('Authorization'), isFalse);
+        payload = jsonDecode(request.body) as Map<String, dynamic>;
+        return http.Response.bytes(utf8.encode(jsonEncode({
+          'title': 'Le poids des petites choses',
+          'director': 'Bastien Valcour de Sève',
+          'narration': 'Une vie ordinaire mérite une attention extraordinaire.',
+        })), 200);
+      }),
+    );
+
+    final opening = await renderer.generateOpening();
+    expect(payload, {'kind': 'opening', 'language': 'fr'});
+    expect(opening.director, 'Bastien Valcour de Sève');
+    renderer.close();
+  });
+
   test('returns the spoken text and MP3 from the fused endpoint', () async {
     late http.Request sent;
     final renderer = NetlifyNarrationRenderer(
@@ -39,6 +62,8 @@ void main() {
     expect(payload['kind'], 'narration');
     expect(payload['voice'], 'morgan-freeman');
     expect(payload['language'], 'ca');
+    expect(payload['prompt'], contains('Els dits reposen sobre el teclat.'));
+    expect(payload['prompt'], contains('Last spoken line'));
     expect(payload['capture']['bytesBase64'], base64Encode(<int>[1, 2, 3]));
     expect(
       rendered.draft.text,
@@ -89,12 +114,23 @@ void main() {
 
 NarrationRequest _request() {
   final capturedAt = DateTime.utc(2026, 9, 13, 12);
+  const observation = SceneObservation(
+    description: 'A desk scene.',
+    fingerprint: 'desk',
+  );
+  final memory = NarrativeMemorySnapshot(
+    recentNarrations: [
+      NarrationMemoryEntry(
+        text: 'Els dits reposen sobre el teclat.',
+        observedAt: capturedAt.subtract(const Duration(seconds: 2)),
+      ),
+    ],
+  );
   return NarrationRequest(
-    prompt: 'Continue the documentary.',
-    observation: const SceneObservation(
-      description: 'A desk scene.',
-      fingerprint: 'desk',
-    ),
+    prompt: const ContinuousDocumentaryPromptBuilder(
+      language: NarrationLanguage.catalan,
+    ).build(observation: observation, memory: memory),
+    observation: observation,
     captures: <CapturedImage>[
       CapturedImage(
         source: 'webcam',
@@ -102,6 +138,6 @@ NarrationRequest _request() {
         bytes: Uint8List.fromList(<int>[1, 2, 3]),
       ),
     ],
-    memory: const NarrativeMemorySnapshot(),
+    memory: memory,
   );
 }

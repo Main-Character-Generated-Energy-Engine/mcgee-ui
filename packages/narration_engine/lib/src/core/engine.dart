@@ -287,7 +287,9 @@ final class NarrationEngine {
   /// Synthesizes and queues a host-supplied line through the normal playback
   /// pipeline. This is useful for startup announcements that should hand off
   /// seamlessly to generated narration.
-  Future<NarrationOutcome> speak(String text) async {
+  /// A [preparedTrack] skips synthesis, allowing the host to prepare an opening
+  /// before camera permission and start it only when its title card is ready.
+  Future<NarrationOutcome> speak(String text, {AudioTrack? preparedTrack}) async {
     if (_closed) {
       throw StateError('The narration engine is closed.');
     }
@@ -306,7 +308,8 @@ final class NarrationEngine {
     final preparationToken = Object();
     _activePreparation = preparationToken;
     try {
-      final track = await _speechSynthesizer.synthesize(spokenText);
+      final track =
+          preparedTrack ?? await _speechSynthesizer.synthesize(spokenText);
       if (!_isCurrent(operationGeneration)) {
         return _skip(captures, observedAt, 'The engine was stopped.');
       }

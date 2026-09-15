@@ -16,6 +16,10 @@ void main() {
         text: 'A previous passage.',
         observedAt: DateTime.utc(2026),
       ),
+      NarrationMemoryEntry(
+        text: 'The mug waits beneath an outstretched hand.',
+        observedAt: DateTime.utc(2026, 1, 1, 0, 0, 2),
+      ),
     ],
     canon: const <String, String>{'mug': 'a recurring adversary'},
   );
@@ -38,11 +42,18 @@ void main() {
     final prompt = const ContinuousDocumentaryPromptBuilder(maximumWords: 20)
         .build(observation: observation, memory: memory);
 
-    expect(prompt, contains('Write all spoken narration in English'));
+    expect(prompt, contains('Write all spoken narration only in English'));
     expect(prompt, contains('in 10 to 20 words'));
     expect(prompt, contains('Immediately preceding narration'));
-    expect(prompt, contains('mounting crisis'));
-    expect(prompt, contains("visible subject's thoughts"));
+    expect(
+      prompt,
+      contains(
+        'Last spoken line — continue this beat:\n'
+        'The mug waits beneath an outstretched hand.',
+      ),
+    );
+    expect(prompt, contains('continue directly from the last spoken line'));
+    expect(prompt, contains("visible subject's actions"));
     expect(prompt, contains('exclusively in the third person'));
     expect(prompt, contains('never use first- or second-person narration'));
     expect(prompt, contains('inner monologue as indirect narration'));
@@ -50,7 +61,7 @@ void main() {
   });
 
   test(
-    'direct captures invite explicitly fictional dramatic inference',
+    'direct captures require visual evidence before dramatic interpretation',
     () async {
       final observation = await const DirectCaptureInterpreter().interpret([
         CapturedImage(
@@ -61,91 +72,76 @@ void main() {
         ),
       ]);
 
-      expect(observation.description, contains('fictional, high-stakes'));
-      expect(observation.details['instruction'], contains('invent theatrical'));
+      expect(observation.description, contains('current visible action'));
+      expect(
+        observation.details['instruction'],
+        contains('concrete action or posture'),
+      );
       expect(
         observation.details['instruction']!.toLowerCase(),
-        isNot(contains('only what is visible')),
+        contains('do not invent unseen actions'),
       );
     },
   );
 
-  test('continuous prompts carry explicit localized writing instructions', () {
-    const expectedPhrases = <NarrationLanguage, String>{
-      NarrationLanguage.french: 'uniquement en français',
-      NarrationLanguage.spanish: 'únicamente en español',
-      NarrationLanguage.italian: 'esclusivamente in italiano',
-      NarrationLanguage.catalan: 'exclusivament en català',
-    };
+  test('all output languages share the same English editorial prompts', () {
+    final defaultStandard = const DocumentaryPromptBuilder(maximumWords: 24)
+        .build(observation: observation, memory: memory);
+    final defaultContinuous = const ContinuousDocumentaryPromptBuilder(
+      maximumWords: 20,
+    ).build(observation: observation, memory: memory);
 
-    for (final entry in expectedPhrases.entries) {
-      final prompt = ContinuousDocumentaryPromptBuilder(
+    for (final language in NarrationLanguage.values) {
+      final standard = DocumentaryPromptBuilder(
+        maximumWords: 24,
+        language: language,
+      ).build(observation: observation, memory: memory);
+      final continuous = ContinuousDocumentaryPromptBuilder(
         maximumWords: 20,
-        language: entry.key,
+        language: language,
       ).build(observation: observation, memory: memory);
 
-      expect(prompt, contains(entry.value), reason: entry.key.nativeName);
-      expect(prompt, contains('10'), reason: entry.key.nativeName);
-      expect(prompt, contains('20'), reason: entry.key.nativeName);
-      expect(prompt, contains('A previous passage.'));
+      for (final prompt in [standard, continuous]) {
+        expect(prompt, contains('only in ${language.englishName}'));
+        expect(prompt, contains('do not translate an English draft'));
+        expect(prompt, contains('Ground every line in the current capture'));
+        expect(prompt, contains('first- or second-person narration'));
+        expect(prompt, contains('Last spoken line — continue this beat'));
+        expect(prompt, contains('The mug waits beneath an outstretched hand.'));
+        expect(prompt, contains('mug: a recurring adversary'));
+        expect(prompt.toLowerCase(), isNot(contains('silence')));
+      }
+      // The target language directive is the only changing instruction.
+      expect(
+        standard.replaceAll(language.writerInstruction, ''),
+        defaultStandard.replaceAll(NarrationLanguage.english.writerInstruction, ''),
+      );
+      expect(
+        continuous.replaceAll(language.writerInstruction, ''),
+        defaultContinuous.replaceAll(NarrationLanguage.english.writerInstruction, ''),
+      );
     }
   });
 
-  test('all localized prompts demand grave third-person voiceover', () {
-    const expectedDramaPhrases = <NarrationLanguage, String>{
-      NarrationLanguage.english: 'something grave is seconds away',
-      NarrationLanguage.french: 'Quelque chose de grave',
-      NarrationLanguage.spanish: 'algo grave está a punto de ocurrir',
-      NarrationLanguage.italian: 'qualcosa di grave è imminente',
-      NarrationLanguage.catalan: 'alguna cosa greu és imminent',
-    };
-    const forbiddenEditorialChoices = <String>[
-      'silence',
-      'silencio',
-      'silenzio',
-      'silenci',
-    ];
-    const expectedPerspectivePhrases = <NarrationLanguage, String>{
-      NarrationLanguage.english: 'first- or second-person narration',
-      NarrationLanguage.french: 'la première ni la deuxième personne',
-      NarrationLanguage.spanish: 'la primera ni la segunda persona',
-      NarrationLanguage.italian: 'la prima né la seconda persona',
-      NarrationLanguage.catalan: 'la primera ni la segona persona',
-    };
-
-    for (final entry in expectedDramaPhrases.entries) {
-      final standardPrompt = DocumentaryPromptBuilder(
-        maximumWords: 24,
-        language: entry.key,
-      ).build(observation: observation, memory: memory);
-      final continuousPrompt = ContinuousDocumentaryPromptBuilder(
-        maximumWords: 20,
-        language: entry.key,
-      ).build(observation: observation, memory: memory);
-
-      expect(
-        standardPrompt,
-        contains(entry.value),
-        reason: entry.key.nativeName,
-      );
-      expect(
-        standardPrompt.toLowerCase(),
-        contains(expectedPerspectivePhrases[entry.key]!.toLowerCase()),
-        reason: entry.key.nativeName,
-      );
-      for (final forbidden in forbiddenEditorialChoices) {
-        expect(
-          standardPrompt.toLowerCase(),
-          isNot(contains(forbidden)),
-          reason: entry.key.nativeName,
-        );
-        expect(
-          continuousPrompt.toLowerCase(),
-          isNot(contains(forbidden)),
-          reason: entry.key.nativeName,
-        );
-      }
-    }
+  test('English context labels preserve previously spoken non-English text', () {
+    final prompt = const ContinuousDocumentaryPromptBuilder(
+      language: NarrationLanguage.catalan,
+    ).build(
+      observation: observation,
+      memory: NarrativeMemorySnapshot(
+        recentNarrations: [
+          NarrationMemoryEntry(
+            text: 'Els dits reposen sobre el teclat.',
+            observedAt: DateTime.utc(2026),
+          ),
+        ],
+      ),
+    );
+    expect(prompt, contains('Current observation:'));
+    expect(prompt, contains('Last spoken line — continue this beat:\n'
+        'Els dits reposen sobre el teclat.'));
+    expect(prompt, contains('only in Catalan'));
+    expect(prompt, isNot(contains('only in English')));
   });
 
   test(
@@ -171,7 +167,7 @@ void main() {
       );
       expect(
         api.responseBody['instructions'],
-        contains('grandiloquent urgency'),
+        contains('Describe the visible action first'),
       );
       expect(
         (api.responseBody['instructions'] as String).toLowerCase(),

@@ -18,7 +18,7 @@ void main() {
     expect(transport.uri, Uri.parse('wss://api.fish.audio/v1/tts/live'));
     expect(transport.headers, {
       'Authorization': 'Bearer secret-value',
-      'model': 's2.1-pro',
+      'model': 's2-pro',
     });
     expect(transport.socket.sent.single, {
       'event': 'start',

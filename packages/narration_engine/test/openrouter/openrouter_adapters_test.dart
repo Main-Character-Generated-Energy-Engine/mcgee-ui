@@ -42,14 +42,17 @@ void main() {
           .synthesize(draft.text!);
 
       final narrationBody = api.responseBodies.single;
-      expect(narrationBody['model'], 'openai/gpt-5.6-sol');
-      expect(narrationBody['max_output_tokens'], 150);
-      expect(narrationBody['reasoning'], {'effort': 'none'});
+      expect(narrationBody['model'], 'openai/gpt-5.6-terra');
+      expect(narrationBody['max_output_tokens'], 2000);
+      expect(narrationBody['reasoning'], {'effort': 'high'});
       expect(
         narrationBody['instructions'],
         contains('10 to 20 words in one commanding sentence'),
       );
-      expect(narrationBody['instructions'], contains('grandiloquent urgency'));
+      expect(
+        narrationBody['instructions'],
+        contains('Describe the visible action first'),
+      );
       final narrationInput = narrationBody['input'] as List;
       final narrationContent =
           (narrationInput.single as Map)['content'] as List;
@@ -129,14 +132,14 @@ void main() {
     expect(draft.canonUpdates, isEmpty);
 
     final body = api.streamingResponseBodies.single;
-    expect(body['model'], 'openai/gpt-5.6-sol');
-    expect(body['max_output_tokens'], 80);
+    expect(body['model'], 'openai/gpt-5.6-terra');
+    expect(body['max_output_tokens'], 2000);
     expect(body['text'], isNull);
     expect(
       body['instructions'],
       contains('Output only the exact words to speak'),
     );
-    expect(body['instructions'], contains('grandiloquent urgency'));
+    expect(body['instructions'], contains('Describe the visible action first'));
     expect(
       (body['instructions'] as String).toLowerCase(),
       isNot(contains('silence')),

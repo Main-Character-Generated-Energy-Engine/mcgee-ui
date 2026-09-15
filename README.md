@@ -34,6 +34,18 @@ flutter run -d chrome \
 Native IO builds can still connect directly to Fish using
 `.secrets/fishaudio-key`; those builds do not use the Netlify endpoint.
 
+After narrator setup connects, an image-free OpenRouter request immediately
+generates a fictional film title, invented director credit, and 45–60-word
+opening voiceover. The shared prompt is
+`lib/assets/film-opening-prompt.json`; native and Netlify paths both use it.
+Speech preparation starts as soon as those credits arrive, during camera
+consent. The camera button presents the credits on black while acquiring the
+camera. After at least three seconds of visible credits, the prepared opening
+plays and the camera fades in on the actual playback-start event. Live frames
+then prepare action narration during the opening, through the same serialized
+audio queue. Provider latency can still leave a gap after the opening. If the
+opening request or its speech fails, the app proceeds to live narration.
+
 The browser samples one JPEG every two seconds, resizes it to a 512-pixel
 longest edge, and encodes it at JPEG quality 65 before submission. The live path
 sends that frame straight to the narration model, avoiding both the old
@@ -74,8 +86,16 @@ windows. It should call `stop()` when the app lifecycle suspends capture and
 `close()` at teardown.
 Do not move camera ownership or audio playback into the package.
 
-The package adapters default to `openai/gpt-5.6-sol`, used as a multimodal
-writer in one pass with reasoning disabled for latency. OpenRouter is asked to
+Narration describes the visible action or posture and a concrete scene detail
+before adding a brief theatrical interpretation. Each prompt carries recent
+spoken lines in order and singles out the last line to continue the same
+activity or story thread. The current image takes precedence over earlier
+speculation; unchanged scenes continue the activity, and scene changes prompt
+a transition. These rules apply to all five languages and both the Netlify and
+native writers.
+
+The package adapters default to `openai/gpt-5.6-terra`, used as a multimodal
+writer in one pass with high reasoning effort. OpenRouter is asked to
 rank providers by latency. Live passages are one 10–20-word sentence and are
 discarded when their source frame is more than 20 seconds old, leaving enough
 time for multimodal writing and speech synthesis. Narration text streams into
@@ -92,9 +112,12 @@ Each typed option keeps its provider model and voice ID paired. Never place a
 raw voice ID, API key, or face-identification behavior in the core.
 
 At startup the host also exposes English, French, Spanish, Italian, and Catalan
-narration. Each language has a fully localized editorial prompt and startup
-line; the selected `en`, `fr`, `es`, `it`, or `ca` value is sent to the
-Netlify function as an additional high-priority language constraint.
+narration. All editorial instructions and context labels use shared English
+prompts, with an English directive to compose directly in the selected output
+language using natural idiom rather than translating an English draft. The film
+title and opening voiceover are generated in the selected language; the
+director credit uses the fixed prefix “A film by”. The selected `en`, `fr`,
+`es`, `it`, or `ca` value is sent to the Netlify function.
 
 ## Validation
 

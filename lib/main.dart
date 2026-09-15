@@ -11,6 +11,7 @@ import 'package:narration_engine/openrouter.dart';
 
 import 'audio_output.dart';
 import 'capture_store.dart';
+import 'film_opening.dart';
 import 'fish_audio_key_loader.dart';
 import 'fish_audio_transport.dart';
 import 'netlify_narration_endpoint.dart';
@@ -54,7 +55,7 @@ class CameraCapturePage extends StatefulWidget {
   State<CameraCapturePage> createState() => _CameraCapturePageState();
 }
 
-enum _ExperienceStage { setup, cameraConsent, live }
+enum _ExperienceStage { setup, cameraConsent, opening, live }
 
 class _CameraCapturePageState extends State<CameraCapturePage>
     with WidgetsBindingObserver, TickerProviderStateMixin {
@@ -77,6 +78,10 @@ class _CameraCapturePageState extends State<CameraCapturePage>
   bool _hasStartedNarrationAudio = false;
   bool _isNarrationPlaying = false;
   bool _startupLineRequested = false;
+  Future<PreparedFilmOpening?>? _openingPreparation;
+  FilmOpening? _filmOpening;
+  DateTime? _titleVisibleSince;
+  int _cameraGeneration = 0;
   _ExperienceStage _experienceStage = _ExperienceStage.setup;
   String? _connectionError;
   String _selectedActor = 'Morgan Freeman';
@@ -124,9 +129,14 @@ class _CameraCapturePageState extends State<CameraCapturePage>
     if (_isInitializingCamera) {
       return;
     }
+    final generation = ++_cameraGeneration;
     setState(() {
       _isInitializingCamera = true;
       _error = null;
+      if (!_startupLineRequested) {
+        _experienceStage = _ExperienceStage.opening;
+        if (_filmOpening != null) _titleVisibleSince = DateTime.now();
+      }
     });
     try {
       final cameras = await availableCameras();
@@ -148,7 +158,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
       );
       await controller.initialize();
 
-      if (!mounted || !_isAppActive) {
+      if (!mounted || !_isAppActive || generation != _cameraGeneration) {
         await controller.dispose();
         return;
       }
@@ -157,35 +167,34 @@ class _CameraCapturePageState extends State<CameraCapturePage>
         _controller = controller;
         _captureStore = captureStore;
         _error = null;
-        _experienceStage = _ExperienceStage.live;
       });
-      _entryController.forward(from: 0);
       final runtime = _narrationRuntime;
       if (!_startupLineRequested && runtime != null) {
-        _startupLineRequested = true;
-        unawaited(_speakStartupLine(runtime));
+        unawaited(_beginPreparedOpening(runtime, generation));
+      } else {
+        _revealCamera();
+        _startCaptureLoop(captureImmediately: true);
       }
-      // Queue live frames behind the startup line deterministically. Calling
-      // speak first claims the engine's preparation slot synchronously.
-      _startCaptureLoop(captureImmediately: true);
     } on CameraException catch (exception, stackTrace) {
       _printError('Camera initialization failed', exception, stackTrace);
-      if (mounted) {
+      if (mounted && generation == _cameraGeneration) {
         setState(() {
           _error = exception.description ?? exception.code;
+          _experienceStage = _ExperienceStage.cameraConsent;
         });
       }
     } catch (exception, stackTrace) {
       _printError('App initialization failed', exception, stackTrace);
-      if (mounted) {
+      if (mounted && generation == _cameraGeneration) {
         setState(() {
           _error = exception.toString();
+          _experienceStage = _ExperienceStage.cameraConsent;
         });
       }
     } finally {
-      if (mounted) {
+      if (mounted && generation == _cameraGeneration) {
         setState(() => _isInitializingCamera = false);
-      } else {
+      } else if (!mounted) {
         _isInitializingCamera = false;
       }
     }
@@ -350,9 +359,11 @@ class _CameraCapturePageState extends State<CameraCapturePage>
         _audioOutput = audioOutput;
         _narrationUnavailable = false;
         _isNarrationPlaying = false;
-        _experienceStage = (_controller?.value.isInitialized ?? false)
-            ? _ExperienceStage.live
-            : _ExperienceStage.cameraConsent;
+        _hasStartedNarrationAudio = false;
+        _startupLineRequested = false;
+        _filmOpening = null;
+        _titleVisibleSince = null;
+        _experienceStage = _ExperienceStage.cameraConsent;
       });
       _narrationEventSubscription = runtime.events.listen((event) {
         if (!mounted || !identical(runtime, _narrationRuntime)) return;
@@ -361,6 +372,12 @@ class _CameraCapturePageState extends State<CameraCapturePage>
           if (!_narrationUnavailable) {
             setState(() => _narrationUnavailable = true);
           }
+        }
+        if (event is NarrationStarted &&
+            _isAppActive &&
+            _experienceStage == _ExperienceStage.opening) {
+          // The adapter emits this only after audio playback starts.
+          _revealCamera();
         }
         final isPlaying = runtime.isPlaying;
         final visiblePhrase = switch (event) {
@@ -391,6 +408,9 @@ class _CameraCapturePageState extends State<CameraCapturePage>
           });
         }
       });
+      // Start the image-free writing request before camera consent/acquisition.
+      // Catch immediately: this future may finish long before it is awaited.
+      _openingPreparation = _prepareOpening(runtime);
       await previousEventSubscription?.cancel();
       await previousRuntime?.close();
       await previousAudioOutput?.dispose();
@@ -412,16 +432,78 @@ class _CameraCapturePageState extends State<CameraCapturePage>
     }
   }
 
-  Future<void> _speakStartupLine(OpenRouterNarrationRuntime runtime) async {
+  Future<PreparedFilmOpening?> _prepareOpening(
+    OpenRouterNarrationRuntime runtime,
+  ) async {
     try {
-      final outcome = await runtime.speakStartupLine();
+      return await runtime.prepareOpening(onCredits: (opening) {
+        if (!mounted || !identical(runtime, _narrationRuntime)) return;
+        setState(() {
+          _filmOpening = opening;
+          if (_experienceStage == _ExperienceStage.opening && _isAppActive) {
+            _titleVisibleSince = DateTime.now();
+          }
+        });
+      });
+    } catch (error, stackTrace) {
+      _printError('Film opening preparation failed', error, stackTrace);
+      return null; // A failed opening must not prevent live narration.
+    }
+  }
+
+  Future<void> _beginPreparedOpening(
+    OpenRouterNarrationRuntime runtime,
+    int generation,
+  ) async {
+    bool isCurrent() =>
+        mounted &&
+        _isAppActive &&
+        generation == _cameraGeneration &&
+        identical(runtime, _narrationRuntime) &&
+        _experienceStage == _ExperienceStage.opening;
+
+    final prepared = await _openingPreparation;
+    if (!isCurrent()) return;
+    if (prepared != null) {
+      // Give the generated credits a readable beat, including when TTS was
+      // already prepared while the user considered camera permission.
+      final shownAt = _titleVisibleSince ?? DateTime.now();
+      final remaining =
+          const Duration(seconds: 3) - DateTime.now().difference(shownAt);
+      if (remaining > Duration.zero) await Future<void>.delayed(remaining);
+      if (!isCurrent()) return;
+      _startupLineRequested = true;
+      // Claim playback before submitting a live frame. The engine can then
+      // prepare action narration while this cached opening track plays.
+      unawaited(_speakOpening(runtime, prepared));
+    } else {
+      _startupLineRequested = true;
+      _revealCamera();
+    }
+    _startCaptureLoop(captureImmediately: true);
+  }
+
+  void _revealCamera() {
+    setState(() => _experienceStage = _ExperienceStage.live);
+    _entryController.forward(from: 0);
+  }
+
+  Future<void> _speakOpening(
+    OpenRouterNarrationRuntime runtime,
+    PreparedFilmOpening opening,
+  ) async {
+    try {
+      final outcome = await runtime.speakOpening(opening);
       if (outcome.kind == NarrationOutcomeKind.failed) {
         _printError(
-          'Startup narration failed',
+          'Opening narration failed',
           outcome.error ?? outcome.reason ?? 'Unknown narration error',
         );
       }
       if (mounted && identical(runtime, _narrationRuntime)) {
+        if (_isAppActive && _experienceStage == _ExperienceStage.opening) {
+          _revealCamera();
+        }
         setState(
           () => _narrationUnavailable =
               outcome.kind == NarrationOutcomeKind.failed &&
@@ -429,8 +511,11 @@ class _CameraCapturePageState extends State<CameraCapturePage>
         );
       }
     } catch (error, stackTrace) {
-      _printError('Startup narration failed', error, stackTrace);
+      _printError('Opening narration failed', error, stackTrace);
       if (mounted && identical(runtime, _narrationRuntime)) {
+        if (_isAppActive && _experienceStage == _ExperienceStage.opening) {
+          _revealCamera();
+        }
         setState(() => _narrationUnavailable = true);
       }
     }
@@ -443,6 +528,9 @@ class _CameraCapturePageState extends State<CameraCapturePage>
         state == AppLifecycleState.hidden ||
         state == AppLifecycleState.detached) {
       _isAppActive = false;
+      _cameraGeneration++;
+      _isInitializingCamera = false;
+      _titleVisibleSince = null;
       _captureTimer?.cancel();
       final controller = _controller;
       _controller = null;
@@ -456,7 +544,9 @@ class _CameraCapturePageState extends State<CameraCapturePage>
       unawaited(_narrationRuntime?.stop());
     } else if (state == AppLifecycleState.resumed) {
       _isAppActive = true;
-      if (_experienceStage == _ExperienceStage.live && _controller == null) {
+      if ((_experienceStage == _ExperienceStage.live ||
+              _experienceStage == _ExperienceStage.opening) &&
+          _controller == null) {
         unawaited(_initializeCamera());
       }
     }
@@ -495,6 +585,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
       body: switch (_experienceStage) {
         _ExperienceStage.setup => _buildSetupScreen(),
         _ExperienceStage.cameraConsent => _buildCameraConsentScreen(),
+        _ExperienceStage.opening => _buildOpeningScreen(),
         _ExperienceStage.live => ColoredBox(
           color: Colors.black,
           child: SafeArea(
@@ -507,6 +598,62 @@ class _CameraCapturePageState extends State<CameraCapturePage>
           ),
         ),
       },
+    );
+  }
+
+  Widget _buildOpeningScreen() {
+    final opening = _filmOpening;
+    return ColoredBox(
+      color: Colors.black,
+      child: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 48),
+            child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 600),
+              child: opening == null
+                  ? const Text(
+                      'Preparing your film…',
+                      key: ValueKey('opening-preparing'),
+                      style: TextStyle(color: Colors.white54, fontSize: 14),
+                    )
+                  : ConstrainedBox(
+                      key: const ValueKey('film-opening-credits'),
+                      constraints: const BoxConstraints(maxWidth: 850),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            opening.title,
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontFamily: 'Georgia',
+                              fontSize: MediaQuery.sizeOf(context).width < 600
+                                  ? 38
+                                  : 64,
+                              height: 1.15,
+                              letterSpacing: 1.2,
+                              color: const Color(0xfff4efe6),
+                            ),
+                          ),
+                          const SizedBox(height: 28),
+                          Text(
+                            'A film by ${opening.director}',
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              fontSize: 16,
+                              height: 1.5,
+                              letterSpacing: 1.5,
+                              color: Colors.white70,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 
@@ -797,13 +944,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
       animation: animation,
       builder: (context, child) {
         final value = animation.value;
-        return Opacity(
-          opacity: value,
-          child: Transform.translate(
-            offset: Offset(0, 18 * (1 - value)),
-            child: child,
-          ),
-        );
+        return Opacity(opacity: value, child: child);
       },
       child: child,
     );
