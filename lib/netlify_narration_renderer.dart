@@ -16,6 +16,7 @@ final class NetlifyNarrationRenderer
     required this.endpoint,
     required this.voice,
     required this.language,
+    required this.characterName,
     http.Client? client,
   }) : _client = client ?? http.Client();
 
@@ -23,11 +24,13 @@ final class NetlifyNarrationRenderer
   final http.Client _client;
   OpenRouterVoiceOption voice;
   final NarrationLanguage language;
+  final String characterName;
 
   Future<FilmOpening> generateOpening() async {
     final response = await _post(<String, Object?>{
       'kind': 'opening',
       'language': language.apiValue,
+      'characterName': characterName,
     });
     return FilmOpening.fromJson(jsonDecode(utf8.decode(response.bodyBytes)));
   }
@@ -47,6 +50,36 @@ final class NetlifyNarrationRenderer
       'prompt': request.prompt,
       'voice': voice.name,
       'language': language.apiValue,
+      'characterName': characterName,
+      'story': <String, Object?>{
+        'summary': request.memory.canon['story_summary'] ??
+            request.memory.storySummary,
+        'recentNarrations': <String>[
+          for (final narration in request.memory.recentNarrations)
+            narration.text,
+        ],
+        'canon': <String, String>{
+          for (final entry in request.memory.canon.entries)
+            if (!const <String>{
+              'story_summary',
+              'current_activity',
+              'open_thread',
+              'recurring_elements',
+            }.contains(entry.key))
+              entry.key: entry.value,
+        },
+        'recurringElements': _decodeRecurringElements(
+          request.memory.canon['recurring_elements'],
+        ),
+        'currentActivity': request.memory.canon['current_activity'] ??
+            (request.memory.recentNarrations.isEmpty
+                ? ''
+                : request.memory.recentNarrations.last.text),
+        'openThread': request.memory.canon['open_thread'] ??
+            (request.memory.recentNarrations.isEmpty
+                ? ''
+                : request.memory.recentNarrations.last.text),
+      },
       'capture': <String, Object?>{
         'id': capture.id,
         'capturedAt': capture.capturedAt.toUtc().toIso8601String(),
@@ -56,8 +89,13 @@ final class NetlifyNarrationRenderer
       },
     });
     final text = _responseText(response);
+    final storyState = _responseStoryState(response);
     return RenderedNarration(
-      draft: NarrationDraft.speak(text),
+      draft: NarrationDraft.speak(
+        text,
+        motifs: storyState?.recurringElements ?? const <String>[],
+        canonUpdates: storyState?.canonUpdates ?? const <String, String>{},
+      ),
       track: _responseTrack(response, capture.id),
     );
   }
@@ -128,7 +166,78 @@ final class NetlifyNarrationRenderer
     return text;
   }
 
+  _StoryState? _responseStoryState(http.Response response) {
+    final encodedState = response.headers['x-story-state'];
+    if (encodedState == null || encodedState.isEmpty) {
+      return null;
+    }
+    try {
+      final value = jsonDecode(
+        utf8.decode(base64Url.decode(base64Url.normalize(encodedState))),
+      );
+      if (value is! Map) throw const FormatException('Invalid story state.');
+      String field(String name, {bool allowEmpty = false}) {
+        final text = value[name];
+        if (text is! String || (!allowEmpty && text.trim().isEmpty)) {
+          throw FormatException('Invalid story state $name.');
+        }
+        return text.trim();
+      }
+
+      final recurring = value['recurringElements'];
+      return _StoryState(
+        storySummary: field('storySummary'),
+        currentActivity: field('currentActivity', allowEmpty: true),
+        openThread: field('openThread', allowEmpty: true),
+        recurringElements: recurring is List
+            ? recurring.whereType<String>().take(8).toList()
+            : const <String>[],
+      );
+    } on Object catch (error) {
+      throw FormatException('Netlify narration returned invalid story state.', error);
+    }
+  }
+
   void close() => _client.close();
+}
+
+final class _StoryState {
+  const _StoryState({
+    this.storySummary = '',
+    this.currentActivity = '',
+    this.openThread = '',
+    this.recurringElements = const <String>[],
+  });
+
+  final String storySummary;
+  final String currentActivity;
+  final String openThread;
+  final List<String> recurringElements;
+
+  Map<String, String> get canonUpdates => <String, String>{
+    'story_summary': storySummary,
+    'current_activity': currentActivity,
+    'open_thread': openThread,
+    'recurring_elements': jsonEncode(recurringElements),
+  };
+}
+
+List<String> _decodeRecurringElements(String? encoded) {
+  if (encoded == null || encoded.trim().isEmpty) return const <String>[];
+  try {
+    final value = jsonDecode(encoded);
+    if (value is List) {
+      return value.whereType<String>().take(8).toList();
+    }
+  } on FormatException {
+    // Accept the comma-separated form written by pre-state-protocol builds.
+  }
+  return encoded
+      .split(',')
+      .map((item) => item.trim())
+      .where((item) => item.isNotEmpty)
+      .take(8)
+      .toList();
 }
 
 String _captureMediaType(CapturedImage capture) {

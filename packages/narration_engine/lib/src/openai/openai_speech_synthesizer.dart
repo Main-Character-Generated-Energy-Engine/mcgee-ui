@@ -25,9 +25,9 @@ final class OpenAiSpeechSynthesizer implements SpeechSynthesizer {
       'voice': voice,
       'input': text,
       'instructions':
-          'Speak as the commanding narrator of a thunderous cinematic epic. '
-          'Sound grave, urgent, and certain that history is about to turn. '
-          'Use dramatic pauses and escalating weight without shouting.',
+          'Speak as the assured narrator of a restrained prestige film. '
+          'Sound observant, measured, and grave, with a trace of dry amusement. '
+          'Use natural pauses and quiet weight without urgency or shouting.',
       'response_format': 'mp3',
       'speed': 0.95,
     });

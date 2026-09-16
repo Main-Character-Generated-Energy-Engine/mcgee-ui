@@ -45,8 +45,9 @@ final class PreparedFilmOpening {
 
 Future<FilmOpening> generateFilmOpening(
   OpenAiApi client,
-  NarrationLanguage language,
-) async {
+  NarrationLanguage language, {
+  required String characterName,
+}) async {
   final config =
       jsonDecode(
             await rootBundle.loadString('lib/assets/film-opening-prompt.json'),
@@ -60,7 +61,8 @@ Future<FilmOpening> generateFilmOpening(
         'max_output_tokens': 2400,
         'store': false,
         'instructions': config['instructions'],
-        'input': 'Create a new opening in ${language.englishName}.',
+        'input': 'Create a new opening in ${language.englishName}. The '
+            'protagonist name is ${jsonEncode(characterName)}.',
       })
       .timeout(const Duration(seconds: 30));
   if (response['status'] == 'incomplete' || response['error'] != null) {

@@ -372,6 +372,118 @@ void main() {
       },
     );
 
+    test(
+      'authors each prefetched successor from the latest spoken story beat',
+      () async {
+        final renderer = _StoryRenderer();
+        final audio = _ControlledAudio();
+        final engine = NarrationEngine(
+          sceneInterpreter: _Interpreter(
+            (captures) async => SceneObservation(
+              description: 'Moment ${captures.single.id}',
+              fingerprint: 'moment:${captures.single.id}',
+            ),
+          ),
+          narrator: _Narrator(
+            (_) async => NarrationDraft.speak('Unused fallback.'),
+          ),
+          speechSynthesizer: _Synthesizer(),
+          narrationRenderer: renderer,
+          audioOutput: audio,
+          policy: const NarrationPolicy(
+            minimumGap: Duration.zero,
+            sceneLookback: 0,
+            rejectRepeatedNarration: false,
+          ),
+          clock: () => DateTime.utc(2026, 1, 1, 9, 0, 5),
+          prefetchDuringPlayback: true,
+          coalesceWhileBusy: true,
+        );
+
+        final first = engine.submit(<CapturedImage>[_capture(0)]);
+        await _waitUntil(() => audio.playCount == 1);
+
+        final second = engine.submit(<CapturedImage>[_capture(1)]);
+        await _waitUntil(() => renderer.requests.length == 2);
+        final third = engine.submit(<CapturedImage>[_capture(2)]);
+        await Future<void>.delayed(Duration.zero);
+
+        // Beat 2 remains coalesced while beat 1 is ready but not yet spoken.
+        expect(renderer.requests, hasLength(2));
+        audio.finish(0);
+        await first;
+        await _waitUntil(() => audio.playCount == 2);
+        await _waitUntil(() => renderer.requests.length == 3);
+
+        expect(
+          renderer.requests.last.memory.recentNarrations.last.text,
+          'Beat 1 continues the story.',
+        );
+        expect(
+          renderer.requests.last.memory.canon['story_summary'],
+          'Summary through beat 1.',
+        );
+
+        audio.finish(1);
+        await second;
+        await _waitUntil(() => audio.playCount == 3);
+        audio.finish(2);
+        await third;
+        await engine.close();
+      },
+    );
+
+    test('drops a queued stale beat and prepares the newest frame', () async {
+      final renderer = _StoryRenderer();
+      final audio = _ControlledAudio();
+      var now = DateTime.utc(2026, 1, 1, 9);
+      final engine = NarrationEngine(
+        sceneInterpreter: _Interpreter(
+          (captures) async => SceneObservation(
+            description: 'Moment ${captures.single.id}',
+            fingerprint: 'moment:${captures.single.id}',
+          ),
+        ),
+        narrator: _Narrator(
+          (_) async => NarrationDraft.speak('Unused fallback.'),
+        ),
+        speechSynthesizer: _Synthesizer(),
+        narrationRenderer: renderer,
+        audioOutput: audio,
+        policy: const NarrationPolicy(
+          minimumGap: Duration.zero,
+          maximumObservationAge: Duration(seconds: 5),
+          sceneLookback: 0,
+          rejectRepeatedNarration: false,
+        ),
+        clock: () => now,
+        prefetchDuringPlayback: true,
+        coalesceWhileBusy: true,
+      );
+
+      final first = engine.submit(<CapturedImage>[_capture(0)]);
+      await _waitUntil(() => audio.playCount == 1);
+      final stale = engine.submit(<CapturedImage>[_capture(1)]);
+      await _waitUntil(() => renderer.requests.length == 2);
+      final newest = engine.submit(<CapturedImage>[_capture(10)]);
+
+      now = DateTime.utc(2026, 1, 1, 9, 0, 10);
+      audio.finish(0);
+      await first;
+      expect((await stale).reason, SilenceReason.staleObservation.message);
+      await _waitUntil(() => renderer.requests.length == 3);
+      await _waitUntil(() => audio.playCount == 2);
+
+      expect(renderer.requests.last.captures.single.id, '10');
+      expect(
+        renderer.requests.last.memory.recentNarrations.last.text,
+        'Beat 0 continues the story.',
+      );
+      audio.finish(1);
+      await newest;
+      await engine.close();
+    });
+
     test('close safely invalidates work still waiting on a provider', () async {
       final interpretation = Completer<SceneObservation>();
       final interpreter = _Interpreter((_) => interpretation.future);
@@ -422,6 +534,37 @@ void main() {
       expect(memory.snapshot.recentObservations.single.fingerprint, 'two');
       expect(memory.snapshot.recentNarrations.single.text, 'second');
       expect(memory.snapshot.canon, <String, String>{'second': 'fact'});
+      expect(memory.snapshot.storySummary, 'first');
+    });
+
+    test('restores bounded spoken history and its rolling recap', () {
+      final restored = NarrativeMemory.fromSnapshot(
+        NarrativeMemorySnapshot(
+          storySummary: 'Earlier, Ari opened the notebook.',
+          recentNarrations: <NarrationMemoryEntry>[
+            NarrationMemoryEntry(
+              text: 'Ari studies the first page.',
+              observedAt: DateTime.utc(2026, 1, 1),
+            ),
+            NarrationMemoryEntry(
+              text: 'Ari reaches for a pencil.',
+              observedAt: DateTime.utc(2026, 1, 2),
+            ),
+          ],
+          canon: const <String, String>{'object': 'notebook'},
+        ),
+        maxNarrations: 1,
+      );
+
+      expect(
+        restored.snapshot.storySummary,
+        'Earlier, Ari opened the notebook. Ari studies the first page.',
+      );
+      expect(
+        restored.snapshot.recentNarrations.single.text,
+        'Ari reaches for a pencil.',
+      );
+      expect(restored.snapshot.canon, <String, String>{'object': 'notebook'});
     });
   });
 
@@ -602,6 +745,28 @@ final class _Renderer implements NarrationRenderer {
   }
 }
 
+final class _StoryRenderer implements NarrationRenderer {
+  final List<NarrationRequest> requests = <NarrationRequest>[];
+
+  @override
+  Future<RenderedNarration> render(NarrationRequest request) async {
+    requests.add(request);
+    final id = request.captures.single.id;
+    return RenderedNarration(
+      draft: NarrationDraft.speak(
+        'Beat $id continues the story.',
+        canonUpdates: <String, String>{
+          'story_summary': 'Summary through beat $id.',
+        },
+      ),
+      track: AudioTrack.fromBytes(
+        id: 'story-$id',
+        bytes: Uint8List.fromList(<int>[1]),
+      ),
+    );
+  }
+}
+
 final class _Interpreter implements SceneInterpreter {
   _Interpreter(this.callback);
 
@@ -754,4 +919,38 @@ final class _Audio implements AudioOutput {
   Future<void> stop() async {
     stopCount += 1;
   }
+}
+
+final class _ControlledAudio implements AudioOutput {
+  final List<Completer<void>> _completions = <Completer<void>>[];
+  int stopCount = 0;
+
+  int get playCount => _completions.length;
+
+  @override
+  Future<AudioPlayback> play(AudioTrack track) async {
+    final completion = Completer<void>();
+    _completions.add(completion);
+    return AudioPlayback(
+      startedAt: DateTime.utc(2026, 1, 1, 9, 0, playCount),
+      completed: completion.future,
+    );
+  }
+
+  void finish(int index) => _completions[index].complete();
+
+  @override
+  Future<void> stop() async {
+    stopCount += 1;
+    for (final completion in _completions) {
+      if (!completion.isCompleted) completion.complete();
+    }
+  }
+}
+
+Future<void> _waitUntil(bool Function() condition) async {
+  for (var attempt = 0; attempt < 100 && !condition(); attempt++) {
+    await Future<void>.delayed(const Duration(milliseconds: 1));
+  }
+  if (!condition()) throw StateError('Timed out waiting for test condition.');
 }

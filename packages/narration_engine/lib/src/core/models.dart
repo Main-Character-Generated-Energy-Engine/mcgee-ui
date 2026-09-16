@@ -64,11 +64,15 @@ final class NarrativeMemorySnapshot {
     this.recentObservations = const <SceneObservation>[],
     this.recentNarrations = const <NarrationMemoryEntry>[],
     this.canon = const <String, String>{},
+    this.storySummary = '',
   });
 
   final List<SceneObservation> recentObservations;
   final List<NarrationMemoryEntry> recentNarrations;
   final Map<String, String> canon;
+
+  /// Bounded recap of spoken beats older than [recentNarrations].
+  final String storySummary;
 }
 
 final class NarrationMemoryEntry {

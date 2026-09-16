@@ -11,6 +11,7 @@ void main() {
     fingerprint: 'mug',
   );
   final memory = NarrativeMemorySnapshot(
+    storySummary: 'Ari began an overly serious campaign to conquer the desk.',
     recentNarrations: <NarrationMemoryEntry>[
       NarrationMemoryEntry(
         text: 'A previous passage.',
@@ -58,6 +59,18 @@ void main() {
     expect(prompt, contains('never use first- or second-person narration'));
     expect(prompt, contains('inner monologue as indirect narration'));
     expect(prompt.toLowerCase(), isNot(contains('silence')));
+  });
+
+  test('names the protagonist and carries the older story recap', () {
+    final prompt = const ContinuousDocumentaryPromptBuilder(
+      maximumWords: 20,
+      characterName: 'Ari',
+    ).build(observation: observation, memory: memory);
+
+    expect(prompt, contains('The protagonist is named "Ari"'));
+    expect(prompt, contains('Use that exact name naturally in this spoken passage'));
+    expect(prompt, contains('Story so far — older spoken beats'));
+    expect(prompt, contains('Ari began an overly serious campaign'));
   });
 
   test(
@@ -152,6 +165,7 @@ void main() {
         client: api,
         requireSpokenLine: true,
         language: NarrationLanguage.french,
+        characterName: 'Ari',
       ).narrate(
         NarrationRequest(
           prompt: 'Continue.',
@@ -169,6 +183,7 @@ void main() {
         api.responseBody['instructions'],
         contains('Describe the visible action first'),
       );
+      expect(api.responseBody['instructions'], contains('named "Ari"'));
       expect(
         (api.responseBody['instructions'] as String).toLowerCase(),
         isNot(contains('silence')),

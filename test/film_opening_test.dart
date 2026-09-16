@@ -16,11 +16,13 @@ void main() {
       final opening = await generateFilmOpening(
         client,
         NarrationLanguage.french,
+        characterName: 'Ari',
       );
 
       expect(opening.title, 'Le poids des petites choses');
       expect(opening.director, 'Bastien Valcour de Sève');
-      expect(client.body['input'], 'Create a new opening in French.');
+      expect(client.body['input'], contains('Create a new opening in French.'));
+      expect(client.body['input'], contains('"Ari"'));
       expect(client.body['model'], 'openai/gpt-5.6-terra');
       expect(client.body['reasoning'], {'effort': 'high'});
       expect(client.body['max_output_tokens'], 2400);
@@ -63,7 +65,7 @@ final class _OpeningApi implements OpenAiApi {
                 'title': 'Le poids des petites choses',
                 'director': 'Bastien Valcour de Sève',
                 'narration':
-                    'Une vie ordinaire mérite une attention extraordinaire.',
+                    'La vie ordinaire d’Ari mérite une attention extraordinaire.',
               }),
             },
           ],

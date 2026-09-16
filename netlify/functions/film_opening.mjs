@@ -3,6 +3,7 @@ import { narrationLanguageName } from "./narration_language.mjs";
 
 export function openingRequestBody(value) {
   const language = narrationLanguageName(value?.language);
+  const characterName = validateCharacterName(value?.characterName);
   return {
     model: prompt.model,
     reasoning: { effort: "high" },
@@ -11,8 +12,20 @@ export function openingRequestBody(value) {
     store: false,
     provider: { sort: "latency" },
     instructions: prompt.instructions,
-    input: `Create a new opening in ${language}.`,
+    input: `Create a new opening in ${language}. The protagonist name is ${JSON.stringify(characterName)}.`,
   };
+}
+
+export function validateCharacterName(value) {
+  if (typeof value !== "string") throw new Error("Missing protagonist name.");
+  if (/[\u0000-\u001f\u007f]/.test(value)) {
+    throw new Error("Invalid protagonist name.");
+  }
+  const name = value.trim().replace(/\s+/g, " ");
+  if (!name || name.length > 60) {
+    throw new Error("Invalid protagonist name.");
+  }
+  return name;
 }
 
 export function parseOpening(value) {

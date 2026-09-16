@@ -106,7 +106,12 @@ final class NarrationEngine {
     );
     final observedAt = window.last.capturedAt;
 
-    if (_activePreparation != null) {
+    // A prepared line that has not started playback is the next story beat,
+    // but it is not in memory yet. Coalesce newer frames until that line is
+    // spoken so they cannot be authored from the preceding story revision.
+    if (_activePreparation != null ||
+        _pendingNarration != null ||
+        (_activeNarration != null && !_isPlayingAudio)) {
       if (coalesceWhileBusy) {
         final pending = _PendingSubmission(
           captures: window,
@@ -347,6 +352,16 @@ final class NarrationEngine {
     if (!identical(_activePreparation, preparationToken)) return;
     _activePreparation = null;
 
+    _startPendingSubmissionIfReady();
+  }
+
+  void _startPendingSubmissionIfReady() {
+    if (_activePreparation != null ||
+        _pendingNarration != null ||
+        (_activeNarration != null && !_isPlayingAudio)) {
+      return;
+    }
+
     final pending = _pendingSubmission;
     _pendingSubmission = null;
     if (pending == null) return;
@@ -388,6 +403,17 @@ final class NarrationEngine {
       if (!_isCurrent(narration.generation)) {
         _completeSkipped(narration, 'The engine was stopped.');
         _activeNarration = null;
+        _startPendingSubmissionIfReady();
+        continue;
+      }
+      final queuedStaleness = _policy.checkStaleness(
+        narration.observedAt,
+        _clock(),
+      );
+      if (queuedStaleness != null) {
+        _completeSkipped(narration, queuedStaleness.message);
+        _activeNarration = null;
+        _startPendingSubmissionIfReady();
         continue;
       }
 
@@ -425,6 +451,9 @@ final class NarrationEngine {
           motifs: narration.motifs,
           canonUpdates: narration.canonUpdates,
         );
+        // The line is now part of the canonical spoken story. A coalesced
+        // frame may safely use it as the immediate predecessor.
+        _startPendingSubmissionIfReady();
         _emit(
           NarrationStarted(
             captures: narration.captures,
@@ -495,6 +524,9 @@ final class NarrationEngine {
         if (identical(_activeNarration, narration)) {
           _activeNarration = null;
         }
+        // If playback failed before the line entered memory, continue from
+        // the last line that really was spoken.
+        _startPendingSubmissionIfReady();
       }
       if (playedSuccessfully && !_closed) {
         final pause = _narrationPause();

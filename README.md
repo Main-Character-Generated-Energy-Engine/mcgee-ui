@@ -35,8 +35,11 @@ Native IO builds can still connect directly to Fish using
 `.secrets/fishaudio-key`; those builds do not use the Netlify endpoint.
 
 After narrator setup connects, an image-free OpenRouter request immediately
-generates a fictional film title, invented director credit, and 45–60-word
-opening voiceover. The shared prompt is
+generates a fictional film title, invented director credit, and 35–55-word
+opening voiceover that names the saved protagonist. The name and spoken story
+memory use `shared_preferences` (browser `localStorage` on web). A returning
+episode skips a new generic opening so its previous final beat remains the one
+continued by the first live capture. The shared opening prompt is
 `lib/assets/film-opening-prompt.json`; native and Netlify paths both use it.
 Speech preparation starts as soon as those credits arrive, during camera
 consent. The camera button presents the credits on black while acquiring the
@@ -82,14 +85,21 @@ prefix, including provider HTTP errors and stack traces when available.
 
 The host should keep one engine for a session so narrative memory, fictional
 canon, repetition checks, pacing, and silence decisions survive between capture
-windows. It should call `stop()` when the app lifecycle suspends capture and
+windows. Older spoken lines roll into a bounded recap while the ten most recent
+lines remain verbatim. Only narration that actually starts playback is saved.
+It should call `stop()` when the app lifecycle suspends capture and
 `close()` at teardown.
 Do not move camera ownership or audio playback into the package.
 
 Narration describes the visible action or posture and a concrete scene detail
 before adding a brief theatrical interpretation. Each prompt carries recent
 spoken lines in order and singles out the last line to continue the same
-activity or story thread. The current image takes precedence over earlier
+activity or story thread. On the Netlify path, the live writer also returns a
+structured story recap, current activity, unresolved thread, and recurring
+elements; these become authoritative context for the next frame rather than
+relying on transcript wording alone. Native direct-provider builds retain the
+bounded spoken history and rolling recap. The current image takes precedence
+over earlier
 speculation; unchanged scenes continue the activity, and scene changes prompt
 a transition. These rules apply to all five languages and both the Netlify and
 native writers.
@@ -116,7 +126,7 @@ narration. All editorial instructions and context labels use shared English
 prompts, with an English directive to compose directly in the selected output
 language using natural idiom rather than translating an English draft. The film
 title and opening voiceover are generated in the selected language; the
-director credit uses the fixed prefix “A film by”. The selected `en`, `fr`,
+director credit uses the fixed prefix “A FILM BY”. The selected `en`, `fr`,
 `es`, `it`, or `ca` value is sent to the Netlify function.
 
 ## Validation

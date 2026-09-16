@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:narration_engine/narration_engine.dart';
 import 'package:narration_engine/openrouter.dart';
 
@@ -15,8 +16,10 @@ import 'film_opening.dart';
 import 'fish_audio_key_loader.dart';
 import 'fish_audio_transport.dart';
 import 'netlify_narration_endpoint.dart';
+import 'narrative_memory_store.dart';
 import 'openrouter_key_loader.dart';
 import 'openrouter_runtime.dart';
+import 'user_profile_store.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -47,9 +50,16 @@ class MainApp extends StatelessWidget {
 }
 
 class CameraCapturePage extends StatefulWidget {
-  const CameraCapturePage({super.key, this.ioApiKeyOverride});
+  const CameraCapturePage({
+    super.key,
+    this.ioApiKeyOverride,
+    this.userProfileStore,
+    this.narrativeMemoryStore,
+  });
 
   final String? ioApiKeyOverride;
+  final UserProfileStore? userProfileStore;
+  final NarrativeMemoryStore? narrativeMemoryStore;
 
   @override
   State<CameraCapturePage> createState() => _CameraCapturePageState();
@@ -88,6 +98,15 @@ class _CameraCapturePageState extends State<CameraCapturePage>
   NarrationLanguage _selectedLanguage = NarrationLanguage.english;
   AudioPlayer? _switchSoundPlayer;
   Uint8List? _switchSoundBytes;
+  late final UserProfileStore _userProfileStore;
+  late final NarrativeMemoryStore _narrativeMemoryStore;
+  final TextEditingController _nameController = TextEditingController();
+  NarrativeMemory _episodeMemory = NarrativeMemory();
+  String? _userName;
+  String? _nameError;
+  bool _isLoadingProfile = true;
+  bool _isSavingProfile = false;
+  bool _isEditingName = false;
 
   static const _actors = <String, OpenRouterVoiceOption>{
     'Morgan Freeman': OpenRouterVoiceOption.morganFreeman,
@@ -109,6 +128,10 @@ class _CameraCapturePageState extends State<CameraCapturePage>
   @override
   void initState() {
     super.initState();
+    _userProfileStore =
+        widget.userProfileStore ?? const SharedPreferencesUserProfileStore();
+    _narrativeMemoryStore =
+        widget.narrativeMemoryStore ?? SharedPreferencesNarrativeMemoryStore();
     WidgetsBinding.instance.addObserver(this);
     _entryController = AnimationController(
       vsync: this,
@@ -123,6 +146,78 @@ class _CameraCapturePageState extends State<CameraCapturePage>
       curve: const Interval(0.18, 0.75, curve: Curves.easeOutCubic),
     );
     _entryController.forward();
+    unawaited(_loadProfile());
+  }
+
+  Future<void> _loadProfile() async {
+    try {
+      final name = await _userProfileStore.loadName();
+      final memory = name == null
+          ? NarrativeMemory()
+          : await _narrativeMemoryStore.load(characterName: name);
+      if (!mounted) return;
+      setState(() {
+        _userName = name;
+        _nameController.text = name ?? '';
+        _episodeMemory = memory;
+        _isEditingName = name == null;
+        _isLoadingProfile = false;
+      });
+    } catch (error, stackTrace) {
+      _printError('Saved profile loading failed', error, stackTrace);
+      if (!mounted) return;
+      setState(() {
+        _isLoadingProfile = false;
+        _isEditingName = true;
+        _connectionError =
+            'Saved details could not be loaded. Enter your name to continue.';
+      });
+    }
+  }
+
+  Future<void> _continueSetup() async {
+    if (_isLoadingProfile || _isSavingProfile || _isConnecting) return;
+    late final String name;
+    try {
+      name = _isEditingName || _userName == null
+          ? normalizeCharacterName(_nameController.text)
+          : _userName!;
+    } on FormatException catch (error) {
+      setState(() => _nameError = error.message);
+      return;
+    }
+
+    setState(() {
+      _isSavingProfile = true;
+      _nameError = null;
+      _connectionError = null;
+    });
+    try {
+      if (name != _userName) {
+        await _narrationRuntime?.stop();
+        await _narrativeMemoryStore.clear();
+        await _userProfileStore.saveName(name);
+        _episodeMemory = NarrativeMemory();
+      }
+      if (!mounted) return;
+      setState(() {
+        _userName = name;
+        _nameController.text = name;
+        _isEditingName = false;
+        _isSavingProfile = false;
+      });
+      await _connectNarration();
+    } catch (error, stackTrace) {
+      _printError('Profile saving failed', error, stackTrace);
+      if (mounted) {
+        setState(() {
+          _connectionError =
+              'Your profile could not be prepared. Please try again.';
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _isSavingProfile = false);
+    }
   }
 
   Future<void> _initializeCamera() async {
@@ -297,6 +392,11 @@ class _CameraCapturePageState extends State<CameraCapturePage>
 
   Future<void> _connectNarration() async {
     if (_isConnecting) return;
+    final characterName = _userName;
+    if (characterName == null) {
+      setState(() => _nameError = 'Enter the name the narrator should use.');
+      return;
+    }
     setState(() {
       _isConnecting = true;
       _connectionError = null;
@@ -332,6 +432,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
         runtime = OpenRouterNarrationRuntime(
           apiKey: apiKey,
           audioOutput: audioOutput,
+          characterName: characterName,
           voice: _actors[_selectedActor]!,
           language: _selectedLanguage,
           fishAudioCredential: fishAudioCredential,
@@ -339,6 +440,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
               ? null
               : createFishAudioTransport(),
           narrationEndpoint: narrationEndpoint,
+          memory: _episodeMemory,
         );
       } catch (error, stackTrace) {
         _printError('Narration runtime creation failed', error, stackTrace);
@@ -360,7 +462,8 @@ class _CameraCapturePageState extends State<CameraCapturePage>
         _narrationUnavailable = false;
         _isNarrationPlaying = false;
         _hasStartedNarrationAudio = false;
-        _startupLineRequested = false;
+        _startupLineRequested =
+            _episodeMemory.snapshot.recentNarrations.isNotEmpty;
         _filmOpening = null;
         _titleVisibleSince = null;
         _experienceStage = _ExperienceStage.cameraConsent;
@@ -378,6 +481,21 @@ class _CameraCapturePageState extends State<CameraCapturePage>
             _experienceStage == _ExperienceStage.opening) {
           // The adapter emits this only after audio playback starts.
           _revealCamera();
+        }
+        if (event is NarrationStarted) {
+          unawaited(
+            _narrativeMemoryStore
+                .save(characterName: characterName, snapshot: runtime.memory)
+                .catchError(
+                  (error, stackTrace) {
+                    _printError(
+                      'Story memory saving failed',
+                      error,
+                      stackTrace,
+                    );
+                  },
+                ),
+          );
         }
         final isPlaying = runtime.isPlaying;
         final visiblePhrase = switch (event) {
@@ -408,9 +526,12 @@ class _CameraCapturePageState extends State<CameraCapturePage>
           });
         }
       });
-      // Start the image-free writing request before camera consent/acquisition.
-      // Catch immediately: this future may finish long before it is awaited.
-      _openingPreparation = _prepareOpening(runtime);
+      // A restored episode continues directly instead of masking its last beat
+      // with a new generic opening. New episodes prepare their opening before
+      // camera consent/acquisition.
+      _openingPreparation = _startupLineRequested
+          ? Future<PreparedFilmOpening?>.value()
+          : _prepareOpening(runtime);
       await previousEventSubscription?.cancel();
       await previousRuntime?.close();
       await previousAudioOutput?.dispose();
@@ -455,15 +576,16 @@ class _CameraCapturePageState extends State<CameraCapturePage>
     OpenRouterNarrationRuntime runtime,
     int generation,
   ) async {
-    bool isCurrent() =>
+    bool ownsSession() =>
         mounted &&
         _isAppActive &&
         generation == _cameraGeneration &&
-        identical(runtime, _narrationRuntime) &&
-        _experienceStage == _ExperienceStage.opening;
+        identical(runtime, _narrationRuntime);
+    bool isOpening() =>
+        ownsSession() && _experienceStage == _ExperienceStage.opening;
 
     final prepared = await _openingPreparation;
-    if (!isCurrent()) return;
+    if (!isOpening()) return;
     if (prepared != null) {
       // Give the generated credits a readable beat, including when TTS was
       // already prepared while the user considered camera permission.
@@ -471,15 +593,31 @@ class _CameraCapturePageState extends State<CameraCapturePage>
       final remaining =
           const Duration(seconds: 3) - DateTime.now().difference(shownAt);
       if (remaining > Duration.zero) await Future<void>.delayed(remaining);
-      if (!isCurrent()) return;
+      if (!isOpening()) return;
       _startupLineRequested = true;
-      // Claim playback before submitting a live frame. The engine can then
-      // prepare action narration while this cached opening track plays.
-      unawaited(_speakOpening(runtime, prepared));
+      // Subscribe before queueing playback. Once NarrationStarted arrives the
+      // opening is already in story memory, so the first live frame can safely
+      // continue it while the prepared audio is still playing.
+      final openingStarted = Completer<void>();
+      final openingSubscription = runtime.events.listen((event) {
+        if (!openingStarted.isCompleted &&
+            event is NarrationStarted &&
+            event.captures.isEmpty &&
+            event.text == prepared.opening.narration) {
+          openingStarted.complete();
+        }
+      });
+      final openingPlayback = _speakOpening(runtime, prepared);
+      await Future.any<Object?>(<Future<Object?>>[
+        openingStarted.future.then<Object?>((_) => null),
+        openingPlayback.then<Object?>((_) => null),
+      ]);
+      await openingSubscription.cancel();
     } else {
       _startupLineRequested = true;
       _revealCamera();
     }
+    if (!ownsSession()) return;
     _startCaptureLoop(captureImmediately: true);
   }
 
@@ -558,6 +696,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
     _captureTimer?.cancel();
     _entryController.dispose();
     _binocularsController.dispose();
+    _nameController.dispose();
     unawaited(_narrationEventSubscription?.cancel());
     unawaited(_switchSoundPlayer?.dispose());
     _controller?.dispose();
@@ -626,25 +765,33 @@ class _CameraCapturePageState extends State<CameraCapturePage>
                           Text(
                             opening.title,
                             textAlign: TextAlign.center,
-                            style: TextStyle(
-                              fontFamily: 'Georgia',
+                            style: GoogleFonts.cormorantGaramond(
                               fontSize: MediaQuery.sizeOf(context).width < 600
-                                  ? 38
-                                  : 64,
-                              height: 1.15,
-                              letterSpacing: 1.2,
+                                  ? 44
+                                  : 74,
+                              height: 0.98,
+                              fontWeight: FontWeight.w600,
+                              letterSpacing: 2.1,
                               color: const Color(0xfff4efe6),
+                              shadows: const [
+                                Shadow(
+                                  color: Color(0x66000000),
+                                  offset: Offset(0, 3),
+                                  blurRadius: 12,
+                                ),
+                              ],
                             ),
                           ),
-                          const SizedBox(height: 28),
+                          const SizedBox(height: 32),
                           Text(
-                            'A film by ${opening.director}',
+                            'A FILM BY  ${opening.director.toUpperCase()}',
                             textAlign: TextAlign.center,
-                            style: const TextStyle(
-                              fontSize: 16,
-                              height: 1.5,
-                              letterSpacing: 1.5,
-                              color: Colors.white70,
+                            style: GoogleFonts.cormorantGaramond(
+                              fontSize: 15,
+                              height: 1.4,
+                              fontWeight: FontWeight.w500,
+                              letterSpacing: 3.2,
+                              color: const Color(0xbff4efe6),
                             ),
                           ),
                         ],
@@ -699,6 +846,8 @@ class _CameraCapturePageState extends State<CameraCapturePage>
             ),
           ),
           const SizedBox(height: 24),
+          _buildProtagonistIdentity(),
+          const SizedBox(height: 24),
           _buildSetupActorSelector(),
           const SizedBox(height: 24),
           DropdownButtonFormField<NarrationLanguage>(
@@ -733,14 +882,23 @@ class _CameraCapturePageState extends State<CameraCapturePage>
           const SizedBox(height: 24),
           FilledButton.icon(
             key: const ValueKey('continue-setup-button'),
-            onPressed: _isConnecting ? null : _connectNarration,
-            icon: _isConnecting
+            onPressed:
+                _isConnecting || _isLoadingProfile || _isSavingProfile
+                ? null
+                : _continueSetup,
+            icon: _isConnecting || _isSavingProfile
                 ? const SizedBox.square(
                     dimension: 18,
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
                 : const Icon(Icons.arrow_forward_rounded),
-            label: Text(_isConnecting ? 'Connecting…' : 'Continue'),
+            label: Text(
+              _isSavingProfile
+                  ? 'Saving…'
+                  : _isConnecting
+                  ? 'Connecting…'
+                  : 'Continue',
+            ),
           ),
           if (_controller?.value.isInitialized ?? false) ...[
             const SizedBox(height: 8),
@@ -767,8 +925,9 @@ class _CameraCapturePageState extends State<CameraCapturePage>
         children: [
           const Icon(Icons.auto_awesome_rounded, color: Colors.white, size: 54),
           const SizedBox(height: 22),
-          const Text(
-            'Your story is waiting.',
+          Text(
+            '${_userName ?? 'Your'}${_userName == null ? '' : '’s'} '
+            'story is waiting.',
             textAlign: TextAlign.center,
             style: TextStyle(
               color: Colors.white,
@@ -780,7 +939,8 @@ class _CameraCapturePageState extends State<CameraCapturePage>
           const SizedBox(height: 14),
           Text(
             'The lights are ready. $_selectedActor has '
-            'cleared their throat. All that remains is you.',
+            'cleared their throat. All that remains is for '
+            '${_userName ?? 'you'} to step into frame.',
             textAlign: TextAlign.center,
             style: TextStyle(
               color: Colors.white.withValues(alpha: 0.76),
@@ -870,6 +1030,71 @@ class _CameraCapturePageState extends State<CameraCapturePage>
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildProtagonistIdentity() {
+    if (_isLoadingProfile) {
+      return const Center(
+        child: SizedBox.square(
+          dimension: 22,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+      );
+    }
+    final name = _userName;
+    if (!_isEditingName && name != null) {
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            '$name’s story will be told by $_selectedActor.',
+            key: const ValueKey('saved-protagonist-message'),
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 17,
+              height: 1.4,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          TextButton(
+            key: const ValueKey('not-you-button'),
+            onPressed: _isSavingProfile
+                ? null
+                : () {
+                    setState(() {
+                      _isEditingName = true;
+                      _nameError = null;
+                      _nameController.selection = TextSelection(
+                        baseOffset: 0,
+                        extentOffset: _nameController.text.length,
+                      );
+                    });
+                  },
+            child: const Text('Not you?'),
+          ),
+        ],
+      );
+    }
+    return TextField(
+      key: const ValueKey('user-name-field'),
+      controller: _nameController,
+      autofocus: name == null,
+      enabled: !_isSavingProfile,
+      textCapitalization: TextCapitalization.words,
+      textInputAction: TextInputAction.done,
+      maxLength: 60,
+      onChanged: (_) {
+        if (_nameError != null) setState(() => _nameError = null);
+      },
+      onSubmitted: (_) => _continueSetup(),
+      decoration: InputDecoration(
+        labelText: 'What should the narrator call you?',
+        helperText: 'This name will be used in the narrated story.',
+        errorText: _nameError,
+        prefixIcon: const Icon(Icons.person_outline_rounded),
       ),
     );
   }

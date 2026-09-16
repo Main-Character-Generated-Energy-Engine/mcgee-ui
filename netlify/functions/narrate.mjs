@@ -35,6 +35,9 @@ export default async function handler(request) {
         "Cache-Control": "no-store",
         "Content-Type": "audio/mpeg",
         "X-Narration-Text": Buffer.from(result.text).toString("base64url"),
+        ...(result.storyState ? {
+          "X-Story-State": Buffer.from(JSON.stringify(result.storyState)).toString("base64url"),
+        } : {}),
         "X-TTS-Provider": result.ttsProvider,
         "Server-Timing": `first-token;dur=${result.timings.firstToken.toFixed(1)}, total;dur=${result.timings.total.toFixed(1)}`,
       },
@@ -63,7 +66,7 @@ function corsHeaders(origin) {
     ...(allowed ? { "Access-Control-Allow-Origin": origin, Vary: "Origin" } : {}),
     "Access-Control-Allow-Headers": "Content-Type",
     "Access-Control-Allow-Methods": "POST, OPTIONS",
-    "Access-Control-Expose-Headers": "Server-Timing, X-Narration-Text, X-TTS-Provider",
+    "Access-Control-Expose-Headers": "Server-Timing, X-Narration-Text, X-Story-State, X-TTS-Provider",
   };
 }
 

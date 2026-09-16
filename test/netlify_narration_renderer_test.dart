@@ -15,19 +15,25 @@ void main() {
       endpoint: Uri.parse('https://example.test/api/narrate'),
       voice: OpenRouterVoiceOption.jade,
       language: NarrationLanguage.french,
+      characterName: 'Ari',
       client: MockClient((request) async {
         expect(request.headers.containsKey('Authorization'), isFalse);
         payload = jsonDecode(request.body) as Map<String, dynamic>;
         return http.Response.bytes(utf8.encode(jsonEncode({
           'title': 'Le poids des petites choses',
           'director': 'Bastien Valcour de Sève',
-          'narration': 'Une vie ordinaire mérite une attention extraordinaire.',
+          'narration':
+              'La vie ordinaire d’Ari mérite une attention extraordinaire.',
         })), 200);
       }),
     );
 
     final opening = await renderer.generateOpening();
-    expect(payload, {'kind': 'opening', 'language': 'fr'});
+    expect(payload, {
+      'kind': 'opening',
+      'language': 'fr',
+      'characterName': 'Ari',
+    });
     expect(opening.director, 'Bastien Valcour de Sève');
     renderer.close();
   });
@@ -38,6 +44,7 @@ void main() {
       endpoint: Uri.parse('https://example.test/api/narrate'),
       voice: OpenRouterVoiceOption.morganFreeman,
       language: NarrationLanguage.catalan,
+      characterName: 'Ari',
       client: MockClient((request) async {
         sent = request;
         return http.Response.bytes(
@@ -47,7 +54,20 @@ void main() {
             'content-type': 'audio/mpeg',
             'x-narration-text': base64Url.encode(
               utf8.encode(
-                'He considers the keyboard, then delegates the matter.',
+                'Ari considers the keyboard, then delegates the matter.',
+              ),
+            ),
+            'x-story-state': base64Url.encode(
+              utf8.encode(
+                jsonEncode(<String, Object?>{
+                  'storySummary': 'Ari continues the campaign at the desk.',
+                  'currentActivity': 'studying the keyboard',
+                  'openThread': 'finish the mysterious desk task',
+                  'recurringElements': <String>[
+                    'keyboard, blue edition',
+                    'desk campaign',
+                  ],
+                }),
               ),
             ),
           },
@@ -62,12 +82,33 @@ void main() {
     expect(payload['kind'], 'narration');
     expect(payload['voice'], 'morgan-freeman');
     expect(payload['language'], 'ca');
+    expect(payload['characterName'], 'Ari');
+    expect(payload['story']['summary'], 'Ari began the day at this desk.');
+    expect(payload['story']['canon'], <String, dynamic>{
+      'recurring_object': 'keyboard',
+    });
+    expect(payload['story']['recurringElements'], <String>[
+      'keyboard, blue edition',
+    ]);
+    expect(payload['story']['openThread'], 'Els dits reposen sobre el teclat.');
     expect(payload['prompt'], contains('Els dits reposen sobre el teclat.'));
     expect(payload['prompt'], contains('Last spoken line'));
     expect(payload['capture']['bytesBase64'], base64Encode(<int>[1, 2, 3]));
     expect(
       rendered.draft.text,
-      'He considers the keyboard, then delegates the matter.',
+      'Ari considers the keyboard, then delegates the matter.',
+    );
+    expect(
+      rendered.draft.canonUpdates['open_thread'],
+      'finish the mysterious desk task',
+    );
+    expect(rendered.draft.motifs, <String>[
+      'keyboard, blue edition',
+      'desk campaign',
+    ]);
+    expect(
+      jsonDecode(rendered.draft.canonUpdates['recurring_elements']!),
+      <String>['keyboard, blue edition', 'desk campaign'],
     );
     expect(rendered.track.bytes, <int>[0x49, 0x44, 0x33]);
     renderer.close();
@@ -79,6 +120,7 @@ void main() {
       endpoint: Uri.parse('https://example.test/api/narrate'),
       voice: OpenRouterVoiceOption.davidAttenborough,
       language: NarrationLanguage.italian,
+      characterName: 'Ari',
       client: MockClient((request) async {
         payload = jsonDecode(request.body) as Map<String, dynamic>;
         return http.Response.bytes(<int>[0x49, 0x44, 0x33], 200);
@@ -94,11 +136,76 @@ void main() {
     renderer.close();
   });
 
+  test('empty returned state retires resolved activity and motifs', () async {
+    final renderer = NetlifyNarrationRenderer(
+      endpoint: Uri.parse('https://example.test/api/narrate'),
+      voice: OpenRouterVoiceOption.jade,
+      language: NarrationLanguage.english,
+      characterName: 'Ari',
+      client: MockClient(
+        (request) async => http.Response.bytes(
+          <int>[0x49, 0x44, 0x33],
+          200,
+          headers: <String, String>{
+            'x-narration-text': base64Url.encode(
+              utf8.encode(
+                'The notebook closes; the modest campaign is complete.',
+              ),
+            ),
+            'x-story-state': base64Url.encode(
+              utf8.encode(
+                jsonEncode(<String, Object?>{
+                  'storySummary': 'Ari completed the notebook campaign.',
+                  'currentActivity': '',
+                  'openThread': '',
+                  'recurringElements': <String>[],
+                }),
+              ),
+            ),
+          },
+        ),
+      ),
+    );
+
+    final rendered = await renderer.render(_request());
+
+    expect(rendered.draft.canonUpdates['current_activity'], '');
+    expect(rendered.draft.canonUpdates['open_thread'], '');
+    expect(rendered.draft.canonUpdates['recurring_elements'], '[]');
+    renderer.close();
+  });
+
+  test('a legacy response without story state preserves existing memory', () async {
+    final renderer = NetlifyNarrationRenderer(
+      endpoint: Uri.parse('https://example.test/api/narrate'),
+      voice: OpenRouterVoiceOption.jade,
+      language: NarrationLanguage.english,
+      characterName: 'Ari',
+      client: MockClient(
+        (request) async => http.Response.bytes(
+          <int>[0x49, 0x44, 0x33],
+          200,
+          headers: <String, String>{
+            'x-narration-text': base64Url.encode(
+              utf8.encode('Ari keeps the notebook campaign alive.'),
+            ),
+          },
+        ),
+      ),
+    );
+
+    final rendered = await renderer.render(_request());
+
+    expect(rendered.draft.canonUpdates, isEmpty);
+    renderer.close();
+  });
+
   test('surfaces endpoint failures', () async {
     final renderer = NetlifyNarrationRenderer(
       endpoint: Uri.parse('https://example.test/api/narrate'),
       voice: OpenRouterVoiceOption.morganFreeman,
       language: NarrationLanguage.english,
+      characterName: 'Ari',
       client: MockClient(
         (_) async => http.Response('{"error":"Invalid credential"}', 401),
       ),
@@ -119,6 +226,11 @@ NarrationRequest _request() {
     fingerprint: 'desk',
   );
   final memory = NarrativeMemorySnapshot(
+    storySummary: 'Ari began the day at this desk.',
+    canon: <String, String>{
+      'recurring_object': 'keyboard',
+      'recurring_elements': jsonEncode(<String>['keyboard, blue edition']),
+    },
     recentNarrations: [
       NarrationMemoryEntry(
         text: 'Els dits reposen sobre el teclat.',

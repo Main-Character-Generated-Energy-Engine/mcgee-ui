@@ -47,7 +47,7 @@ void main() {
       expect(narrationBody['reasoning'], {'effort': 'high'});
       expect(
         narrationBody['instructions'],
-        contains('10 to 20 words in one commanding sentence'),
+        contains('10 to 20 words in one confident, complete sentence'),
       );
       expect(
         narrationBody['instructions'],

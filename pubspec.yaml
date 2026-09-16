@@ -14,11 +14,13 @@ dependencies:
   camera: ^0.11.2+1
   camera_windows: ^0.2.6+5
   flutter_svg: ^2.3.0
+  google_fonts: ^8.2.1
   image: ^4.5.4
   narration_engine:
     path: packages/narration_engine
   path_provider: ^2.1.6
   http: ^1.6.0
+  shared_preferences: ^2.5.3
 dev_dependencies:
   flutter_test:
     sdk: flutter

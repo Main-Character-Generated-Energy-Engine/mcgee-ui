@@ -20,22 +20,34 @@ final class OpenRouterNarrationRuntime {
     required NarrationEngine engine,
     required _SelectableSpeechSynthesizer speechSynthesizer,
     required NarrationLanguage language,
+    required String characterName,
     NetlifyNarrationRenderer? netlifyRenderer,
   }) : _client = client,
        _engine = engine,
        _speechSynthesizer = speechSynthesizer,
        _language = language,
+       _characterName = characterName,
        _netlifyRenderer = netlifyRenderer;
 
   factory OpenRouterNarrationRuntime({
     String? apiKey,
     required AudioOutput audioOutput,
+    required String characterName,
     OpenRouterVoiceOption voice = OpenRouterVoiceOption.morganFreeman,
     NarrationLanguage language = NarrationLanguage.english,
     String? fishAudioCredential,
     FishAudioWebSocketTransport? fishAudioTransport,
     Uri? narrationEndpoint,
+    NarrativeMemory? memory,
   }) {
+    final normalizedCharacterName = characterName.trim();
+    if (normalizedCharacterName.isEmpty) {
+      throw ArgumentError.value(
+        characterName,
+        'characterName',
+        'Must not be empty.',
+      );
+    }
     final key = apiKey?.trim();
     if (narrationEndpoint == null &&
         (key == null || key.isEmpty || key.contains(RegExp(r'\s')))) {
@@ -49,6 +61,7 @@ final class OpenRouterNarrationRuntime {
             endpoint: narrationEndpoint,
             voice: voice,
             language: language,
+            characterName: normalizedCharacterName,
           );
     final speechSynthesizer = _SelectableSpeechSynthesizer(
       client: client,
@@ -70,6 +83,7 @@ final class OpenRouterNarrationRuntime {
           continuous: true,
           maximumWords: 20,
           language: language,
+          characterName: normalizedCharacterName,
         ),
         speechSynthesizer: speechSynthesizer,
         audioOutput: audioOutput,
@@ -77,7 +91,9 @@ final class OpenRouterNarrationRuntime {
         promptBuilder: ContinuousDocumentaryPromptBuilder(
           maximumWords: 20,
           language: language,
+          characterName: normalizedCharacterName,
         ),
+        memory: memory,
         policy: const NarrationPolicy(
           minimumGap: Duration.zero,
           maximumObservationAge: liveMaximumObservationAge,
@@ -98,6 +114,7 @@ final class OpenRouterNarrationRuntime {
       ),
       speechSynthesizer: speechSynthesizer,
       language: language,
+      characterName: normalizedCharacterName,
       netlifyRenderer: netlifyRenderer,
     );
   }
@@ -106,18 +123,20 @@ final class OpenRouterNarrationRuntime {
   final NarrationEngine _engine;
   final _SelectableSpeechSynthesizer _speechSynthesizer;
   final NarrationLanguage _language;
+  final String _characterName;
   final NetlifyNarrationRenderer? _netlifyRenderer;
   bool _closed = false;
 
   Stream<NarrationEngineEvent> get events => _engine.events;
   bool get isPlaying => _engine.isPlaying;
+  NarrativeMemorySnapshot get memory => _engine.memory;
 
   Future<PreparedFilmOpening> prepareOpening({
     required void Function(FilmOpening) onCredits,
   }) async {
     if (_closed) throw StateError('The narration runtime is closed.');
     final opening = await (_netlifyRenderer?.generateOpening() ??
-        generateFilmOpening(_client, _language));
+        generateFilmOpening(_client, _language, characterName: _characterName));
     if (_closed) throw StateError('The narration runtime is closed.');
     onCredits(opening);
     final track = await _speechSynthesizer

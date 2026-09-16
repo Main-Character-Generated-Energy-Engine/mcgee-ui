@@ -14,6 +14,7 @@ final class OpenRouterNarrationModel implements StreamingNarrationModel {
     this.maximumWords = 24,
     this.includeCaptures = false,
     this.language = NarrationLanguage.english,
+    this.characterName,
   }) : _delegate = OpenAiNarrationModel(
          client: client,
          model: model,
@@ -22,6 +23,7 @@ final class OpenRouterNarrationModel implements StreamingNarrationModel {
          maximumWords: maximumWords,
          includeCaptures: includeCaptures,
          language: language,
+         characterName: characterName,
        );
 
   final String model;
@@ -30,6 +32,7 @@ final class OpenRouterNarrationModel implements StreamingNarrationModel {
   final int maximumWords;
   final bool includeCaptures;
   final NarrationLanguage language;
+  final String? characterName;
   final OpenAiNarrationModel _delegate;
 
   @override
