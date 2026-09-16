@@ -7,8 +7,7 @@ without importing this app.
 
 ## Run the web slice
 
-Run the local function server in one terminal (with the Netlify CLI installed
-and authenticated to the linked `mcgee-narrator` site):
+Run the local function server in one terminal (with the Netlify CLI installed):
 
 ```sh
 npm install
@@ -45,13 +44,22 @@ isn't running, narration fails instead of falling back to production. Release
 deployments use `/api/narrate` on their own origin, including deploy previews.
 The debug console prints the resolved backend URL at connection time.
 
-Netlify Dev loads the linked site's `dev` environment variables and watches the
-local function code. Set `OPENROUTER_API_KEY` and `FISH_AUDIO_API_KEY` in that
-context, or export them in the function server's terminal. Existing keys scoped
-only to `production` are not automatically available in `dev`. Do not put keys
-in Flutter defines. After editing shared prompt JSON, restart the local function
-server if its watcher doesn't rebuild the function; hot-restart Flutter when
-changing bundled assets or compile-time defines.
+The dev launcher reads `OPENROUTER_API_KEY` and `FISH_AUDIO_API_KEY` from its
+shell environment, falling back to `.secrets/openrouter-key` and
+`.secrets/fishaudio-key`. It trims file-ending newlines, rejects missing or
+obviously malformed credentials, and prints only their source, never their value.
+Fish is optional; without it, speech uses OpenRouter. To check local credential
+loading without launching anything, run `npm run dev:functions -- --check`.
+
+Netlify Dev runs with `--offline`, so it watches local functions without fetching
+remote environment variables or substituting AI Gateway credentials. The
+functions themselves still call OpenRouter and Fish over the network. Production
+keys stay in Netlify's hosted environment. Do not put keys in Flutter defines.
+After editing shared prompt JSON, restart the local function server if its watcher
+doesn't rebuild the function; hot-restart Flutter when changing bundled assets or
+compile-time defines. If a local request returns an upstream HTTP 401, restart the
+function server with the dev command above and check the printed credential source;
+an explicit shell key takes priority over its local file.
 
 To deliberately test a deployed backend, use an explicit override:
 
