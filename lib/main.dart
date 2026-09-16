@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:camera/camera.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -13,10 +13,12 @@ import 'package:narration_engine/openrouter.dart';
 import 'audio_output.dart';
 import 'capture_store.dart';
 import 'film_opening.dart';
+import 'film_opening_credits.dart';
 import 'fish_audio_key_loader.dart';
 import 'fish_audio_transport.dart';
 import 'netlify_narration_endpoint.dart';
 import 'narrative_memory_store.dart';
+import 'narrator_profile.dart';
 import 'openrouter_key_loader.dart';
 import 'openrouter_runtime.dart';
 import 'user_profile_store.dart';
@@ -71,8 +73,9 @@ class _CameraCapturePageState extends State<CameraCapturePage>
     with WidgetsBindingObserver, TickerProviderStateMixin {
   CameraController? _controller;
   late final AnimationController _entryController;
+  late final AnimationController _creditsController;
   late final AnimationController _binocularsController;
-  late final Animation<double> _previewEntry;
+  late final CurvedAnimation _previewEntry;
   Timer? _captureTimer;
   StreamSubscription<NarrationEngineEvent>? _narrationEventSubscription;
   CaptureStore? _captureStore;
@@ -90,8 +93,8 @@ class _CameraCapturePageState extends State<CameraCapturePage>
   bool _startupLineRequested = false;
   Future<PreparedFilmOpening?>? _openingPreparation;
   FilmOpening? _filmOpening;
-  DateTime? _titleVisibleSince;
   int _cameraGeneration = 0;
+  int _actorSelectionGeneration = 0;
   _ExperienceStage _experienceStage = _ExperienceStage.setup;
   String? _connectionError;
   String _selectedActor = 'Morgan Freeman';
@@ -135,7 +138,11 @@ class _CameraCapturePageState extends State<CameraCapturePage>
     WidgetsBinding.instance.addObserver(this);
     _entryController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 1200),
+      duration: FilmOpeningCredits.cameraFadeDuration,
+    );
+    _creditsController = AnimationController(
+      vsync: this,
+      duration: FilmOpeningCredits.duration,
     );
     _binocularsController = AnimationController(
       vsync: this,
@@ -143,9 +150,8 @@ class _CameraCapturePageState extends State<CameraCapturePage>
     )..repeat();
     _previewEntry = CurvedAnimation(
       parent: _entryController,
-      curve: const Interval(0.18, 0.75, curve: Curves.easeOutCubic),
+      curve: Curves.easeInOut,
     );
-    _entryController.forward();
     unawaited(_loadProfile());
   }
 
@@ -230,9 +236,10 @@ class _CameraCapturePageState extends State<CameraCapturePage>
       _error = null;
       if (!_startupLineRequested) {
         _experienceStage = _ExperienceStage.opening;
-        if (_filmOpening != null) _titleVisibleSince = DateTime.now();
+        _creditsController.reset();
       }
     });
+    _startCreditsIfReady();
     try {
       final cameras = await availableCameras();
       if (cameras.isEmpty) {
@@ -273,6 +280,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
     } on CameraException catch (exception, stackTrace) {
       _printError('Camera initialization failed', exception, stackTrace);
       if (mounted && generation == _cameraGeneration) {
+        _creditsController.stop(canceled: true);
         setState(() {
           _error = exception.description ?? exception.code;
           _experienceStage = _ExperienceStage.cameraConsent;
@@ -281,6 +289,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
     } catch (exception, stackTrace) {
       _printError('App initialization failed', exception, stackTrace);
       if (mounted && generation == _cameraGeneration) {
+        _creditsController.stop(canceled: true);
         setState(() {
           _error = exception.toString();
           _experienceStage = _ExperienceStage.cameraConsent;
@@ -307,9 +316,46 @@ class _CameraCapturePageState extends State<CameraCapturePage>
   }
 
   void _selectActor(String actor) {
+    if (actor == _selectedActor) return;
     unawaited(_playSwitchSound());
     setState(() => _selectedActor = actor);
-    _narrationRuntime?.setVoice(_actors[actor]!);
+    final revision = ++_actorSelectionGeneration;
+    final runtime = _narrationRuntime;
+    if (runtime == null) return;
+    _captureTimer?.cancel();
+    unawaited(_changeNarrator(runtime, actor, revision));
+  }
+
+  Future<void> _changeNarrator(
+    OpenRouterNarrationRuntime runtime,
+    String actor,
+    int revision,
+  ) async {
+    try {
+      await runtime.setVoice(_actors[actor]!);
+      if (!mounted ||
+          !identical(runtime, _narrationRuntime) ||
+          revision != _actorSelectionGeneration) {
+        return;
+      }
+      setState(() {
+        _isNarrationPlaying = false;
+        _visibleNarrationPhrase = null;
+      });
+      if (!_startupLineRequested) {
+        setState(() => _filmOpening = null);
+        _creditsController.reset();
+        _openingPreparation = _prepareOpening(runtime);
+      }
+      if (_isAppActive && _experienceStage == _ExperienceStage.live) {
+        _startCaptureLoop(captureImmediately: true);
+      }
+    } catch (error, stackTrace) {
+      _printError('Narrator switch failed', error, stackTrace);
+      if (mounted && revision == _actorSelectionGeneration) {
+        setState(() => _narrationUnavailable = true);
+      }
+    }
   }
 
   Future<void> _playSwitchSound() async {
@@ -426,6 +472,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
         }
       }
 
+      final narratorProfiles = await loadNarratorProfiles();
       final audioOutput = FlutterAudioOutput();
       late final OpenRouterNarrationRuntime runtime;
       try {
@@ -433,6 +480,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
           apiKey: apiKey,
           audioOutput: audioOutput,
           characterName: characterName,
+          narratorProfiles: narratorProfiles,
           voice: _actors[_selectedActor]!,
           language: _selectedLanguage,
           fishAudioCredential: fishAudioCredential,
@@ -465,7 +513,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
         _startupLineRequested =
             _episodeMemory.snapshot.recentNarrations.isNotEmpty;
         _filmOpening = null;
-        _titleVisibleSince = null;
+        _creditsController.reset();
         _experienceStage = _ExperienceStage.cameraConsent;
       });
       _narrationEventSubscription = runtime.events.listen((event) {
@@ -483,6 +531,13 @@ class _CameraCapturePageState extends State<CameraCapturePage>
           _revealCamera();
         }
         if (event is NarrationStarted) {
+          if (kDebugMode) {
+            final timestamp = event.playbackStartedAt.toUtc().toIso8601String();
+            final kind = event.captures.isEmpty ? 'opening' : 'live';
+            final line = event.text.replaceAll(RegExp(r'\s+'), ' ').trim();
+            final voice = _actors[_selectedActor]!.name;
+            debugPrint('[MCGEE narration] $timestamp [$kind][$voice] $line');
+          }
           unawaited(
             _narrativeMemoryStore
                 .save(characterName: characterName, snapshot: runtime.memory)
@@ -556,19 +611,33 @@ class _CameraCapturePageState extends State<CameraCapturePage>
   Future<PreparedFilmOpening?> _prepareOpening(
     OpenRouterNarrationRuntime runtime,
   ) async {
+    final revision = _actorSelectionGeneration;
     try {
       return await runtime.prepareOpening(onCredits: (opening) {
-        if (!mounted || !identical(runtime, _narrationRuntime)) return;
+        if (!mounted ||
+            !identical(runtime, _narrationRuntime) ||
+            revision != _actorSelectionGeneration) {
+          return;
+        }
         setState(() {
           _filmOpening = opening;
-          if (_experienceStage == _ExperienceStage.opening && _isAppActive) {
-            _titleVisibleSince = DateTime.now();
-          }
         });
+        _startCreditsIfReady();
       });
     } catch (error, stackTrace) {
+      if (revision != _actorSelectionGeneration) return null;
       _printError('Film opening preparation failed', error, stackTrace);
       return null; // A failed opening must not prevent live narration.
+    }
+  }
+
+  void _startCreditsIfReady() {
+    if (_isAppActive &&
+        _experienceStage == _ExperienceStage.opening &&
+        _filmOpening != null &&
+        !_creditsController.isAnimating &&
+        !_creditsController.isCompleted) {
+      _creditsController.forward();
     }
   }
 
@@ -586,14 +655,17 @@ class _CameraCapturePageState extends State<CameraCapturePage>
 
     final prepared = await _openingPreparation;
     if (!isOpening()) return;
-    if (prepared != null) {
-      // Give the generated credits a readable beat, including when TTS was
-      // already prepared while the user considered camera permission.
-      final shownAt = _titleVisibleSince ?? DateTime.now();
-      final remaining =
-          const Duration(seconds: 3) - DateTime.now().difference(shownAt);
-      if (remaining > Duration.zero) await Future<void>.delayed(remaining);
+    if (_filmOpening != null) {
+      try {
+        // Credits may already be running while the camera and speech prepare.
+        // Finish both cards and return to black before starting the voiceover.
+        await _creditsController.forward().orCancel;
+      } on TickerCanceled {
+        return;
+      }
       if (!isOpening()) return;
+    }
+    if (prepared != null) {
       _startupLineRequested = true;
       // Subscribe before queueing playback. Once NarrationStarted arrives the
       // opening is already in story memory, so the first live frame can safely
@@ -668,7 +740,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
       _isAppActive = false;
       _cameraGeneration++;
       _isInitializingCamera = false;
-      _titleVisibleSince = null;
+      _creditsController.stop(canceled: true);
       _captureTimer?.cancel();
       final controller = _controller;
       _controller = null;
@@ -694,7 +766,9 @@ class _CameraCapturePageState extends State<CameraCapturePage>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _captureTimer?.cancel();
+    _previewEntry.dispose();
     _entryController.dispose();
+    _creditsController.dispose();
     _binocularsController.dispose();
     _nameController.dispose();
     unawaited(_narrationEventSubscription?.cancel());
@@ -742,65 +816,12 @@ class _CameraCapturePageState extends State<CameraCapturePage>
 
   Widget _buildOpeningScreen() {
     final opening = _filmOpening;
-    return ColoredBox(
-      color: Colors.black,
-      child: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 48),
-            child: AnimatedSwitcher(
-              duration: const Duration(milliseconds: 600),
-              child: opening == null
-                  ? const Text(
-                      'Preparing your film…',
-                      key: ValueKey('opening-preparing'),
-                      style: TextStyle(color: Colors.white54, fontSize: 14),
-                    )
-                  : ConstrainedBox(
-                      key: const ValueKey('film-opening-credits'),
-                      constraints: const BoxConstraints(maxWidth: 850),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            opening.title,
-                            textAlign: TextAlign.center,
-                            style: GoogleFonts.cormorantGaramond(
-                              fontSize: MediaQuery.sizeOf(context).width < 600
-                                  ? 44
-                                  : 74,
-                              height: 0.98,
-                              fontWeight: FontWeight.w600,
-                              letterSpacing: 2.1,
-                              color: const Color(0xfff4efe6),
-                              shadows: const [
-                                Shadow(
-                                  color: Color(0x66000000),
-                                  offset: Offset(0, 3),
-                                  blurRadius: 12,
-                                ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(height: 32),
-                          Text(
-                            'A FILM BY  ${opening.director.toUpperCase()}',
-                            textAlign: TextAlign.center,
-                            style: GoogleFonts.cormorantGaramond(
-                              fontSize: 15,
-                              height: 1.4,
-                              fontWeight: FontWeight.w500,
-                              letterSpacing: 3.2,
-                              color: const Color(0xbff4efe6),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-            ),
-          ),
-        ),
-      ),
+    if (opening == null) {
+      return const SizedBox.expand(child: ColoredBox(color: Colors.black));
+    }
+    return DefaultTextStyle.merge(
+      style: GoogleFonts.cormorantGaramond(),
+      child: FilmOpeningCredits(opening: opening, animation: _creditsController),
     );
   }
 

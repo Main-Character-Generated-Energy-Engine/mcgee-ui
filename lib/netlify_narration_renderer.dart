@@ -1,6 +1,7 @@
+import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:http/http.dart' as http;
 import 'package:narration_engine/narration_engine.dart';
 import 'package:narration_engine/openrouter.dart';
@@ -25,14 +26,24 @@ final class NetlifyNarrationRenderer
   OpenRouterVoiceOption voice;
   final NarrationLanguage language;
   final String characterName;
+  static const revision = 'narration-stream-v2';
+  final Set<_AudioResponse> _responses = {};
+  final Set<Completer<void>> _requests = {};
 
   Future<FilmOpening> generateOpening() async {
-    final response = await _post(<String, Object?>{
+    final response = await _send(<String, Object?>{
       'kind': 'opening',
+      'voice': voice.name,
       'language': language.apiValue,
       'characterName': characterName,
     });
-    return FilmOpening.fromJson(jsonDecode(utf8.decode(response.bodyBytes)));
+    try {
+      final body = await response.response.stream.bytesToString()
+          .timeout(const Duration(seconds: 30));
+      return FilmOpening.fromJson(jsonDecode(body));
+    } finally {
+      _abort(response.abort);
+    }
   }
 
   @override
@@ -45,7 +56,7 @@ final class NetlifyNarrationRenderer
       );
     }
     final capture = request.captures.single;
-    final response = await _post(<String, Object?>{
+    final response = await _send(<String, Object?>{
       'kind': 'narration',
       'prompt': request.prompt,
       'voice': voice.name,
@@ -71,14 +82,10 @@ final class NetlifyNarrationRenderer
         'recurringElements': _decodeRecurringElements(
           request.memory.canon['recurring_elements'],
         ),
-        'currentActivity': request.memory.canon['current_activity'] ??
-            (request.memory.recentNarrations.isEmpty
-                ? ''
-                : request.memory.recentNarrations.last.text),
-        'openThread': request.memory.canon['open_thread'] ??
-            (request.memory.recentNarrations.isEmpty
-                ? ''
-                : request.memory.recentNarrations.last.text),
+        // The opening is already in recentNarrations. It is not a visible
+        // activity and may exceed the bounded structured-state fields.
+        'currentActivity': request.memory.canon['current_activity'] ?? '',
+        'openThread': request.memory.canon['open_thread'] ?? '',
       },
       'capture': <String, Object?>{
         'id': capture.id,
@@ -88,16 +95,22 @@ final class NetlifyNarrationRenderer
         'protagonistHint': ?capture.protagonistHint,
       },
     });
-    final text = _responseText(response);
-    final storyState = _responseStoryState(response);
-    return RenderedNarration(
-      draft: NarrationDraft.speak(
-        text,
-        motifs: storyState?.recurringElements ?? const <String>[],
-        canonUpdates: storyState?.canonUpdates ?? const <String, String>{},
-      ),
-      track: _responseTrack(response, capture.id),
-    );
+    try {
+      final text = _responseText(response.response);
+      final storyState = _responseStoryState(response.response);
+      return RenderedNarration(
+        draft: NarrationDraft.speak(
+          text,
+          motifs: storyState?.recurringElements ?? const <String>[],
+          canonUpdates: storyState?.canonUpdates ?? const <String, String>{},
+        ),
+        track: _responseTrack(response, capture.id),
+      );
+    } catch (_) {
+      _abort(response.abort);
+      await response.response.stream.listen(null).cancel();
+      rethrow;
+    }
   }
 
   @override
@@ -106,7 +119,7 @@ final class NetlifyNarrationRenderer
     if (spokenText.isEmpty) {
       throw ArgumentError.value(text, 'text', 'Must not be empty.');
     }
-    final response = await _post(<String, Object?>{
+    final response = await _send(<String, Object?>{
       'kind': 'speech',
       'text': spokenText,
       'voice': voice.name,
@@ -115,42 +128,67 @@ final class NetlifyNarrationRenderer
     return _responseTrack(response, 'startup');
   }
 
-  Future<http.Response> _post(Map<String, Object?> payload) async {
+  Future<({http.StreamedResponse response, Completer<void> abort})> _send(
+    Map<String, Object?> payload,
+  ) async {
     final timeout = payload['kind'] == 'opening'
         ? const Duration(seconds: 30)
         : const Duration(seconds: 18);
-    final response = await _client
-        .post(
+    final abort = Completer<void>();
+    _requests.add(abort);
+    final request = http.AbortableRequest(
+      'POST', endpoint, abortTrigger: abort.future,
+    )
+      ..headers.addAll(const {
+        'Content-Type': 'application/json',
+        'Accept': 'audio/mpeg, application/json',
+      })
+      ..body = jsonEncode(payload);
+    try {
+      final response = await _client.send(request).timeout(timeout);
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        final message = await response.stream.bytesToString().timeout(timeout);
+        throw http.ClientException(
+          'Netlify narration failed with HTTP ${response.statusCode}: '
+          '${message.length <= 1000 ? message : '${message.substring(0, 1000)}…'}',
           endpoint,
-          headers: const <String, String>{
-            'Content-Type': 'application/json',
-            'Accept': 'audio/mpeg, application/json',
-          },
-          body: jsonEncode(payload),
-        )
-        .timeout(timeout);
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      final message = utf8.decode(response.bodyBytes, allowMalformed: true);
-      throw http.ClientException(
-        'Netlify narration failed with HTTP ${response.statusCode}: '
-        '${message.length <= 1000 ? message : '${message.substring(0, 1000)}…'}',
-        endpoint,
-      );
+        );
+      }
+      if (kDebugMode && response.headers['x-narration-revision'] != revision) {
+        _abort(abort);
+        await response.stream.listen(null).cancel();
+        throw StateError(
+          '$endpoint is not serving $revision '
+          '(received ${response.headers['x-narration-revision'] ?? 'no revision'}). '
+          'Restart the local functions server or redeploy the backend. '
+          'Debug builds refuse incompatible narration endpoints.',
+        );
+      }
+      return (response: response, abort: abort);
+    } catch (_) {
+      _abort(abort);
+      rethrow;
     }
-    return response;
   }
 
-  AudioTrack _responseTrack(http.Response response, String sourceId) {
-    if (response.bodyBytes.isEmpty) {
-      throw StateError('Netlify narration returned an empty MP3.');
-    }
-    return AudioTrack.fromBytes(
-      id: 'netlify-$sourceId-${response.bodyBytes.length}',
-      bytes: Uint8List.fromList(response.bodyBytes),
+  AudioTrack _responseTrack(
+    ({http.StreamedResponse response, Completer<void> abort}) pending,
+    String sourceId,
+  ) {
+    late final _AudioResponse audio;
+    audio = _AudioResponse(pending.response.stream, onClose: () {
+      _abort(pending.abort);
+      _responses.remove(audio);
+    });
+    _responses.add(audio);
+    return AudioTrack.fromStream(
+      id: 'netlify-$sourceId',
+      stream: audio.stream,
+      onCancel: audio.cancel,
     );
   }
 
-  String _responseText(http.Response response) {
+  String _responseText(http.BaseResponse response) {
     final encodedText = response.headers['x-narration-text'];
     if (encodedText == null || encodedText.isEmpty) {
       throw const FormatException(
@@ -166,7 +204,7 @@ final class NetlifyNarrationRenderer
     return text;
   }
 
-  _StoryState? _responseStoryState(http.Response response) {
+  _StoryState? _responseStoryState(http.BaseResponse response) {
     final encodedState = response.headers['x-story-state'];
     if (encodedState == null || encodedState.isEmpty) {
       return null;
@@ -198,7 +236,75 @@ final class NetlifyNarrationRenderer
     }
   }
 
-  void close() => _client.close();
+  void _abort(Completer<void> abort) {
+    _requests.remove(abort);
+    if (!abort.isCompleted) abort.complete();
+  }
+
+  void cancelPending() {
+    for (final abort in _requests.toList()) {
+      _abort(abort);
+    }
+    for (final response in _responses.toList()) {
+      unawaited(response.cancel());
+    }
+  }
+
+  void close() {
+    cancelPending();
+    _client.close();
+  }
+}
+
+// Read immediately while a track waits its turn in the engine's audio queue.
+// Errors are retained in the single-subscription stream until playback listens.
+final class _AudioResponse {
+  _AudioResponse(Stream<List<int>> source, {required this.onClose}) {
+    _controller.onCancel = cancel;
+    _subscription = source.timeout(const Duration(seconds: 15)).listen(
+      (bytes) {
+        if (bytes.isEmpty || _closed) return;
+        _byteCount += bytes.length;
+        if (_byteCount > 8 * 1024 * 1024) {
+          _fail(StateError('Narration audio exceeded the size limit.'));
+          return;
+        }
+        _controller.add(bytes);
+      },
+      onError: (Object error, StackTrace stack) => _fail(error, stack),
+      onDone: () {
+        if (_closed) return;
+        if (_byteCount == 0) {
+          _fail(StateError('Netlify narration returned an empty MP3.'));
+        } else {
+          _closed = true;
+          unawaited(_controller.close());
+          onClose();
+        }
+      },
+    );
+  }
+
+  final void Function() onClose;
+  final _controller = StreamController<List<int>>();
+  StreamSubscription<List<int>>? _subscription;
+  bool _closed = false;
+  int _byteCount = 0;
+  Stream<List<int>> get stream => _controller.stream;
+
+  void _fail(Object error, [StackTrace? stack]) {
+    if (_closed) return;
+    _controller.addError(error, stack);
+    unawaited(cancel());
+  }
+
+  Future<void> cancel() async {
+    if (_closed) return;
+    _closed = true;
+    onClose();
+    await _subscription?.cancel();
+    unawaited(_controller.close());
+  }
 }
 
 final class _StoryState {

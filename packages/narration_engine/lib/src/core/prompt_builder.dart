@@ -1,4 +1,5 @@
 import 'models.dart';
+import 'name_cadence.dart';
 import 'narration_language.dart';
 
 abstract interface class NarrationPromptBuilder {
@@ -14,11 +15,15 @@ final class DocumentaryPromptBuilder implements NarrationPromptBuilder {
     this.maximumWords = 30,
     this.language = NarrationLanguage.english,
     this.characterName,
+    this.narratorInstructions,
   }) : assert(maximumWords > 0);
 
   final int maximumWords;
   final NarrationLanguage language;
   final String? characterName;
+
+  /// Optional host-selected genre and tense, evaluated for each passage.
+  final String Function()? narratorInstructions;
 
   @override
   String build({
@@ -40,18 +45,19 @@ final class DocumentaryPromptBuilder implements NarrationPromptBuilder {
         .join('\n');
 
     final copy = _sharedCopy;
-    final namedCharacter = _namedCharacterInstruction(characterName, memory);
+    final mode = narratorInstructions?.call();
+    final namedCharacter = _namedCharacterInstruction(characterName, memory, profiled: mode != null);
     final storySummary = memory.canon['story_summary'] ?? memory.storySummary;
     final currentActivity = memory.canon['current_activity'];
     final openThread = memory.canon['open_thread'];
 
-    return '''${copy.documentaryRole}
+    return '''${mode ?? copy.documentaryRole}
 ${language.writerInstruction}
 ${namedCharacter.isEmpty ? '' : '$namedCharacter\n'}${copy.documentaryTask(maximumWords)}
 ${copy.visualGrounding}
-${copy.subjectVoiceover}
-${copy.dramaticInterpretation}
-${copy.continueTrack}
+${mode == null ? copy.subjectVoiceover : ''}
+${mode == null ? copy.dramaticInterpretation : _profiledDramaticInterpretation}
+${mode == null ? copy.continueTrack : _profiledContinueTrack}
 ${copy.avoidRepetition}
 ${copy.alwaysDeliver}
 
@@ -93,11 +99,15 @@ final class ContinuousDocumentaryPromptBuilder
     this.maximumWords = 20,
     this.language = NarrationLanguage.english,
     this.characterName,
+    this.narratorInstructions,
   }) : assert(maximumWords >= 10);
 
   final int maximumWords;
   final NarrationLanguage language;
   final String? characterName;
+
+  /// Optional host-selected genre and tense, evaluated for each passage.
+  final String Function()? narratorInstructions;
 
   @override
   String build({
@@ -115,20 +125,21 @@ final class ContinuousDocumentaryPromptBuilder
         .join('\n');
 
     final copy = _sharedCopy;
-    final namedCharacter = _namedCharacterInstruction(characterName, memory);
+    final mode = narratorInstructions?.call();
+    final namedCharacter = _namedCharacterInstruction(characterName, memory, profiled: mode != null);
     final storySummary = memory.canon['story_summary'] ?? memory.storySummary;
     final currentActivity = memory.canon['current_activity'];
     final openThread = memory.canon['open_thread'];
 
-    return '''${copy.continuousRole}
+    return '''${mode ?? copy.continuousRole}
 ${language.writerInstruction}
 ${namedCharacter.isEmpty ? '' : '$namedCharacter\n'}${copy.continuousTask(maximumWords)}
 ${copy.visualGrounding}
 ${copy.alwaysSpeak}
-${copy.continueTrack}
+${mode == null ? copy.continueTrack : _profiledContinueTrack}
 ${copy.avoidRepetition}
-${copy.subjectVoiceover}
-${copy.dramaticInterpretation}
+${mode == null ? copy.subjectVoiceover : ''}
+${mode == null ? copy.dramaticInterpretation : _profiledDramaticInterpretation}
 
 ${copy.currentObservation}:
 ${observation.description}
@@ -211,25 +222,25 @@ final class _PromptCopy {
 }
 
 final _sharedCopy = _PromptCopy(
-  documentaryRole: 'You are the assured, observant, dryly amused narrator of a cinematic natural-history film starring one seemingly ordinary human.',
+  documentaryRole: 'You are the observant, dryly amused narrator inventing one continuous fictional story starring one ordinary human.',
   documentaryTask: (words) =>
-      'Describe the observed action in one confident, complete cinematic sentence of at most $words words.',
+      'Advance the ongoing fictional story in one complete sentence of at most $words words.',
   visualGrounding:
-      'Ground every line in the current capture: give the visible subject, a concrete action or posture, and a specific object or spatial detail. Spend most of the sentence describing what is actually visible. A single still image cannot establish a movement sequence; do not invent unseen actions, objects, reactions, or outcomes. When unclear, describe only the detail that can be seen.',
+      'Ground every line in the current capture with one discernible action, posture, object, or spatial detail, and make it serve the fictional story. The visual anchor need not come first or occupy most of the sentence. Do not claim to see absent objects, unseen movement, or unobserved physical outcomes.',
   subjectVoiceover:
       "Narrate the visible subject's actions in cinematic documentary voiceover. Write the spoken line exclusively in the third person: never use first- or second-person narration. Render any imagined inner monologue as indirect narration, never as the subject speaking or thinking in quotation.",
   dramaticInterpretation:
-      'Use precise wording and at most one disproportionate, playful judgment. Imagined motives are comic framing, never visual evidence; do not replace the action with abstract destiny, threats, or a new invented crisis.',
+      'Invent and sustain a small fictional goal, its snag, and developments caused by earlier beats. Imagined motives and consequences are story canon, never verified personal facts. Keep them consistent and avoid grandiose abstractions or unrelated punchlines.',
   avoidRepetition:
       'Vary phrasing without discarding recurring subjects, objects, or the ongoing premise. Reusing their names helps continuity; avoid repeating whole lines or stock metaphors.',
   alwaysDeliver: 'Always deliver a spoken line anchored in the observed moment.',
-  continuousRole: 'You are the assured, observant, dryly amused voice of one continuous cinematic natural-history film starring one seemingly ordinary human.',
+  continuousRole: 'You are the observant, dryly amused voice of one continuous fictional film starring one ordinary human.',
   continuousTask: (words) =>
       'Write the next connected passage in 10 to $words words as one confident, complete sentence.',
   alwaysSpeak:
-      'Always speak. If little has changed, describe the visible posture or ongoing activity as a continuation; do not manufacture a new event or force escalation.',
+      'Always speak. If little changes visually, develop the same fictional dilemma through a new interpretation, hesitation, decision, or consequence without inventing a visible physical event.',
   continueTrack:
-      'Read recent narration oldest to newest and continue directly from the last spoken line. Carry forward the same activity, recurring object, or unresolved playful premise, and use the current visible detail to advance, complicate, or resolve it. Do not reintroduce the protagonist or start a new story each frame. If the scene changes, bridge briefly to the newly visible activity; current visual evidence overrides earlier speculation. If history is empty or only a generic introduction, establish the first concrete activity.',
+      'Read recent narration oldest to newest and continue directly from the last spoken line. Each beat must follow because of the previous beat: carry forward the fictional goal and unresolved snag, then use a visible detail for an attempt, complication, discovery, choice, or payoff. Develop one thread across several beats before resolving it. Do not reintroduce the protagonist or start a new story each frame. A scene change must connect to the existing thread. If history contains only the opening voiceover, inherit its exact small goal and snag; make the first visible detail serve that predicament. If a legacy opening is abstract, turn its final idea into one concrete fictional goal. Only empty history calls for a new premise.',
   currentObservation: 'Current observation',
   visibleDetails: 'Visible scene details',
   establishedCanon: 'Established canon',
@@ -245,20 +256,31 @@ final _sharedCopy = _PromptCopy(
 
 String _namedCharacterInstruction(
   String? name,
-  NarrativeMemorySnapshot memory,
-) {
+  NarrativeMemorySnapshot memory, {
+  bool profiled = false,
+}) {
   final normalized = name?.trim() ?? '';
   if (normalized.isEmpty) return '';
-  final recentNameUse = memory.recentNarrations
-      .reversed
-      .take(2)
-      .any((entry) => entry.text.toLowerCase().contains(normalized.toLowerCase()));
-  final cadence = recentNameUse
-      ? 'Use the name or a pronoun according to natural cinematic rhythm; do '
-            'not begin every line with the name.'
-      : 'Use that exact name naturally in this spoken passage.';
+  final cadence = nameCadenceInstruction(memory, normalized);
   return 'The protagonist is named "$normalized". $cadence If the image does '
       'not clearly show a person, the name is only a narrative anchor, not '
-      'evidence that the person is visible. Never use a generic label such as '
-      'the subject or protagonist in the spoken line.';
+      'evidence that the person is visible. '
+      '${profiled ? '' : 'Never use a generic label such as the subject or protagonist in the spoken line.'}';
 }
+
+const _profiledDramaticInterpretation =
+    'Develop the selected mode’s fictional premise and stakes through connected '
+    'decisions and consequences. Fictional interpretations are story canon, '
+    'not verified facts about the person. Follow the mode’s point of view and '
+    'tense even if older narration used another mode.';
+
+const _profiledContinueTrack =
+    'Read recent narration oldest to newest and continue directly from the last '
+    'spoken line. Carry forward its premise and unresolved stakes; each beat '
+    'must advance an attempt, complication, discovery, choice, or payoff. '
+    'Within two or three unchanged captures, change the fictional strategy or '
+    'reach a provisional payoff. Do not invent unseen supporting characters '
+    'or institutions merely to prolong a wait. If only the opening has played, '
+    'make the first visible detail serve its precise premise. Keep the story '
+    'through scene changes and resolve a thread before starting the next. '
+    'Only empty history calls for a new premise.';

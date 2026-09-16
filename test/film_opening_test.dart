@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mcgee/film_opening.dart';
+import 'package:mcgee/narrator_profile.dart';
 import 'package:narration_engine/narration_engine.dart';
 import 'package:narration_engine/openai.dart';
 
@@ -32,6 +33,28 @@ void main() {
     },
   );
 
+  test('every narrator sends its own opener and accepts mode point of view', () async {
+    final profiles = await loadNarratorProfiles();
+    final examples = <String, String>{
+      'morgan-freeman': 'I remembered Ari searching for the words; his pride had made an apology difficult.',
+      'david-attenborough': 'Nature conserves energy. Ari is one human animal whose next demand tests those reserves.',
+      'jade': "Ari faces a decision crisis. We're turning now to the live feed.",
+    };
+    for (final entry in examples.entries) {
+      final api = _OpeningApi(narration: entry.value);
+      final opening = await generateFilmOpening(
+        api,
+        NarrationLanguage.english,
+        characterName: 'Ari',
+        profile: profiles[entry.key],
+      );
+      expect(opening.narration, entry.value);
+      expect(api.responseCalls, 1);
+      expect(api.body['instructions'], contains(profiles[entry.key]!.openingInstructions));
+      expect(api.body['instructions'], isNot(contains('No personal pronouns')));
+    }
+  });
+
   test(
     'rejects malformed generated credits instead of displaying broken fields',
     () {
@@ -49,12 +72,17 @@ void main() {
 }
 
 final class _OpeningApi implements OpenAiApi {
+  _OpeningApi({this.narration = 'La vie ordinaire d’Ari mérite une attention extraordinaire.'});
+
+  final String narration;
+  int responseCalls = 0;
   late Map<String, Object?> body;
   int speechCalls = 0;
 
   @override
   Future<Map<String, Object?>> createResponse(Map<String, Object?> body) async {
     this.body = body;
+    responseCalls++;
     return {
       'output': [
         {
@@ -64,8 +92,7 @@ final class _OpeningApi implements OpenAiApi {
               'text': jsonEncode({
                 'title': 'Le poids des petites choses',
                 'director': 'Bastien Valcour de Sève',
-                'narration':
-                    'La vie ordinaire d’Ari mérite une attention extraordinaire.',
+                'narration': narration,
               }),
             },
           ],

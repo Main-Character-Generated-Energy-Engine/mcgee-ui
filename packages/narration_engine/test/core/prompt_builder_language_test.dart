@@ -39,6 +39,41 @@ void main() {
     );
   });
 
+  test('mode changes preserve history without conflicting point of view', () async {
+    var mode = 'Morgan mode: tell the recollection in past tense; I is allowed.';
+    final builder = ContinuousDocumentaryPromptBuilder(
+      characterName: 'Ari',
+      narratorInstructions: () => mode,
+    );
+    final api = _CapturingApi();
+    final model = OpenAiNarrationModel(
+      client: api,
+      characterName: 'Ari',
+      narratorInstructions: () => mode,
+    );
+    for (final nextMode in [mode, 'David mode: present-tense specimen survival.', 'Eve mode: current live news.']) {
+      mode = nextMode;
+      final prompt = builder.build(observation: observation, memory: memory);
+      expect(prompt, contains(mode));
+      expect(prompt, contains('The mug waits beneath an outstretched hand.'));
+      expect(prompt, contains('mug: a recurring adversary'));
+      expect(prompt, isNot(contains('exclusively in the third person')));
+      expect(prompt, isNot(contains('exact small goal')));
+      expect(prompt, isNot(contains('Never use a generic label')));
+      await model.narrate(NarrationRequest(
+        prompt: prompt,
+        observation: observation,
+        captures: const [],
+        memory: memory,
+      ));
+      final instructions = api.responseBody['instructions'] as String;
+      expect(instructions, contains(mode));
+      expect(instructions, contains('Use the supplied character name exactly once'));
+      expect(instructions, isNot(contains('exclusively in the third person')));
+      expect(instructions, isNot(contains('Keep the stakes small')));
+    }
+  });
+
   test('English remains the prompt builder default', () {
     final prompt = const ContinuousDocumentaryPromptBuilder(maximumWords: 20)
         .build(observation: observation, memory: memory);
@@ -68,13 +103,13 @@ void main() {
     ).build(observation: observation, memory: memory);
 
     expect(prompt, contains('The protagonist is named "Ari"'));
-    expect(prompt, contains('Use that exact name naturally in this spoken passage'));
+    expect(prompt, contains('Use the supplied character name exactly once'));
     expect(prompt, contains('Story so far — older spoken beats'));
     expect(prompt, contains('Ari began an overly serious campaign'));
   });
 
   test(
-    'direct captures require visual evidence before dramatic interpretation',
+    'direct captures anchor the ongoing fiction in visual evidence',
     () async {
       final observation = await const DirectCaptureInterpreter().interpret([
         CapturedImage(
@@ -181,7 +216,7 @@ void main() {
       );
       expect(
         api.responseBody['instructions'],
-        contains('Describe the visible action first'),
+        contains('Invent and sustain character motives'),
       );
       expect(api.responseBody['instructions'], contains('named "Ari"'));
       expect(
@@ -200,7 +235,7 @@ final class _CapturingApi implements OpenAiApi {
     responseBody = body;
     return {
       'output_text':
-          '{"action":"speak","text":"Il avance.","reason":"",'
+          '{"action":"speak","text":"Ari avance.","reason":"",'
           '"motifs":[],"canon_updates":[]}',
     };
   }

@@ -37,6 +37,8 @@ abstract interface class StreamingSpeechSynthesis {
 
 /// Optional fused provider for hosts that must keep provider credentials off
 /// the client while still overlapping narration generation and synthesis.
+/// A streamed track can be returned before synthesis finishes. Ownership of
+/// its resources transfers to the caller, including when the draft is rejected.
 abstract interface class NarrationRenderer {
   Future<RenderedNarration> render(NarrationRequest request);
 }
@@ -44,7 +46,10 @@ abstract interface class NarrationRenderer {
 /// The engine controls sequencing; implementations provide platform playback.
 abstract interface class AudioOutput {
   /// Returns after playback starts. [AudioPlayback.completed] settles when the
-  /// track finishes or playback fails.
+  /// track finishes or playback fails. Stream-backed tracks should begin
+  /// playback as chunks arrive, without waiting for the entire stream. The
+  /// engine disposes tracks after playback; implementations must cancel their
+  /// own stream subscriptions when stopped or when playback fails.
   Future<AudioPlayback> play(AudioTrack track);
 
   Future<void> stop();

@@ -71,7 +71,7 @@ void main() {
       expect(_schemaName(narrationBody), 'narration_decision');
       expect(
         narrationBody['instructions'],
-        contains('Describe the visible action first'),
+        contains('Invent and sustain character motives'),
       );
       expect(
         (narrationBody['instructions'] as String).toLowerCase(),

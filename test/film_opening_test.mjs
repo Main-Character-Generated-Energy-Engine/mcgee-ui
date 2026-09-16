@@ -24,11 +24,10 @@ test("opening prompts share English creative instructions for every output langu
     assert.match(body.input, new RegExp(`Create a new opening in ${name}`));
     assert.match(body.instructions, /Compose the title and narration directly/);
     assert.match(body.instructions, /Do not translate an English draft/);
-    assert.match(body.instructions, /real film already in progress/);
-    assert.match(body.instructions, /not like a trailer/);
-    assert.match(body.instructions, /plausible opening voiceover/);
-    assert.match(body.instructions, /same tension/);
-    assert.match(body.instructions, /not fabricated personal detail/);
+    assert.match(body.instructions, /25 to 45 words in two or three short/);
+    assert.match(body.instructions, /specific unresolved problem/);
+    assert.match(body.instructions, /first-person memory/);
+    assert.match(body.instructions, /past tense/);
   }
 });
 
@@ -87,25 +86,74 @@ test("opening route returns JSON credits without waiting for speech or requiring
   const previousFetch = globalThis.fetch;
   const previousKey = process.env.OPENROUTER_API_KEY;
   let calls = 0;
+  let sent;
   try {
     process.env.OPENROUTER_API_KEY = "server-test-key";
-    globalThis.fetch = async () => {
+    globalThis.fetch = async (_url, options) => {
       calls++;
+      sent = JSON.parse(options.body);
       return Response.json({ output_text: JSON.stringify(opening) });
     };
     const response = await handler(new Request("https://example.test/api/narrate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ kind: "opening", language: "fr", characterName: "Ari" }),
+      body: JSON.stringify({ kind: "opening", language: "fr", characterName: "Ari", voice: "jade" }),
     }));
     assert.equal(response.status, 200);
     assert.match(response.headers.get("content-type"), /application\/json/);
     assert.equal(response.headers.get("cache-control"), "no-store");
+    assert.equal(response.headers.get("x-narration-revision"), "narration-stream-v2");
+    assert.equal(response.headers.get("x-narration-profile"), "jade");
     assert.deepEqual(await response.json(), opening);
     assert.equal(calls, 1);
+    assert.match(sent.instructions, /MODE: EVE/);
   } finally {
     globalThis.fetch = previousFetch;
     if (previousKey === undefined) delete process.env.OPENROUTER_API_KEY;
     else process.env.OPENROUTER_API_KEY = previousKey;
+  }
+});
+
+test("routes every opening voice to its own premise and point of view", () => {
+  const cases = [
+    ["morgan-freeman", /PERSONAL RECOLLECTION/, /first-person memory/, /past tense/],
+    ["david-attenborough", /NATURE DOCUMENTARY/, /one particular human animal/, /present tense/],
+    ["jade", /BREAKING NEWS/, /live feed/, /present-tense newsroom/],
+  ];
+  const instructions = new Set();
+  for (const [voice, mode, premise, tense] of cases) {
+    const body = openingRequestBody({ voice, characterName: "Ari" });
+    assert.match(body.instructions, mode);
+    assert.match(body.instructions, premise);
+    assert.match(body.instructions, tense);
+    assert.doesNotMatch(body.instructions, /no they, them, their, he, she|Use third person, without personal pronouns/);
+    instructions.add(body.instructions);
+  }
+  assert.equal(instructions.size, 3);
+  assert.equal(openingRequestBody({ characterName: "Ari" }).instructions,
+    openingRequestBody({ voice: "morgan-freeman", characterName: "Ari" }).instructions);
+  for (const voice of ["eve", "unknown", "toString", "__proto__", null, ["jade"]]) {
+    assert.throws(() => openingRequestBody({ voice, characterName: "Ari" }), /Unsupported narrator/);
+  }
+});
+
+test("accepts mode-appropriate narrator and character pronouns without rewriting", async () => {
+  for (const [voice, narration] of [
+    ["morgan-freeman", "I remembered when Ari struggled with an apology. His pride had stood in the way."],
+    ["david-attenborough", "Nature rewards patience. Ari conserves energy as his next challenge approaches."],
+    ["jade", "Ari's routine is collapsing under one unresolved decision. We're turning now to the live feed."],
+  ]) {
+    let calls = 0;
+    const result = await generateOpening({ voice, characterName: "Ari" }, {
+      openRouterApiKey: "test-only",
+      fetchImpl: async (_url, options) => {
+        calls++;
+        assert.equal(JSON.parse(options.body).instructions,
+          openingRequestBody({ voice, characterName: "Ari" }).instructions);
+        return Response.json({ output_text: JSON.stringify({ ...opening, narration }) });
+      },
+    });
+    assert.equal(calls, 1);
+    assert.equal(result.narration, narration);
   }
 });

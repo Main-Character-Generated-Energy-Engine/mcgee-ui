@@ -373,6 +373,61 @@ void main() {
     );
 
     test(
+      'first live beat inherits the opening while its audio is playing',
+      () async {
+        final renderer = _StoryRenderer();
+        final audio = _ControlledAudio();
+        final engine = NarrationEngine(
+          sceneInterpreter: const DirectCaptureInterpreter(),
+          narrator: _Narrator((_) async => NarrationDraft.speak('Unused.')),
+          speechSynthesizer: _Synthesizer(),
+          narrationRenderer: renderer,
+          audioOutput: audio,
+          promptBuilder: const ContinuousDocumentaryPromptBuilder(),
+          policy: const NarrationPolicy(
+            minimumGap: Duration.zero,
+            sceneLookback: 0,
+            rejectRepeatedNarration: false,
+          ),
+          clock: () => DateTime.utc(2026, 1, 1, 9, 0, 5),
+          prefetchDuringPlayback: true,
+          coalesceWhileBusy: true,
+        );
+        const opening =
+            'Ari needed a convincing excuse. '
+            'Unfortunately, the excuse needed an excuse of its own.';
+        final intro = engine.speak(opening);
+        // Submit before playback starts: preparation must wait for the opening
+        // to enter spoken memory, then overlap its audio rather than reset it.
+        final live = engine.submit([_capture(0)]);
+        await _waitUntil(() => renderer.requests.length == 1);
+        expect(audio.playCount, 1);
+        expect(
+          renderer.requests.single.memory.recentNarrations.single.text,
+          opening,
+        );
+        expect(
+          renderer.requests.single.prompt,
+          contains('Last spoken line — continue this beat:\n$opening'),
+        );
+        expect(
+          renderer.requests.single.prompt,
+          contains('inherit its exact small goal'),
+        );
+        audio.finish(0);
+        await intro;
+        await _waitUntil(() => audio.playCount == 2);
+        audio.finish(1);
+        await live;
+        expect(
+          engine.memory.recentNarrations.map((entry) => entry.text),
+          [opening, 'Beat 0 continues the story.'],
+        );
+        await engine.close();
+      },
+    );
+
+    test(
       'authors each prefetched successor from the latest spoken story beat',
       () async {
         final renderer = _StoryRenderer();

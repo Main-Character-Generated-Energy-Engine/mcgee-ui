@@ -20,11 +20,11 @@ final class DirectCaptureInterpreter implements SceneInterpreter {
       fingerprint: 'direct-captures:${captures.last.id}',
       details: const <String, String>{
         'instruction':
-            'Describe the visible subject, concrete action or posture, and '
-            'an identifiable object or spatial detail. A single still image '
+            'Identify a concrete action or posture, object, or spatial detail '
+            'to anchor the next fictional story beat. A single still image '
             'does not establish a movement sequence. Do not invent unseen '
-            'actions. Connect this visible moment to the preceding narration; '
-            'keep any theatrical interpretation subordinate to the action.',
+            'actions as visual evidence. Use this visible moment to develop '
+            'the fictional goal and unresolved snag from preceding narration.',
       },
     );
   }

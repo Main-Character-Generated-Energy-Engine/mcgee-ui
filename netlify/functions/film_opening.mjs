@@ -1,9 +1,11 @@
 import prompt from "../../lib/assets/film-opening-prompt.json" with { type: "json" };
 import { narrationLanguageName } from "./narration_language.mjs";
+import { narratorProfile } from "./narrator_profiles.mjs";
 
 export function openingRequestBody(value) {
   const language = narrationLanguageName(value?.language);
   const characterName = validateCharacterName(value?.characterName);
+  const profile = narratorProfile(value?.voice === undefined ? "morgan-freeman" : value.voice);
   return {
     model: prompt.model,
     reasoning: { effort: "high" },
@@ -11,7 +13,7 @@ export function openingRequestBody(value) {
     max_output_tokens: 2400,
     store: false,
     provider: { sort: "latency" },
-    instructions: prompt.instructions,
+    instructions: `${prompt.instructions}\n\n${profile.openingInstructions}`,
     input: `Create a new opening in ${language}. The protagonist name is ${JSON.stringify(characterName)}.`,
   };
 }
@@ -50,7 +52,9 @@ export async function generateOpening(value, options) {
       "Content-Type": "application/json",
     },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(28_000),
+    signal: options.signal
+      ? AbortSignal.any([options.signal, AbortSignal.timeout(28_000)])
+      : AbortSignal.timeout(28_000),
   });
   if (!response.ok) throw new Error(`Opening generation failed with HTTP ${response.status}.`);
   const result = await response.json();

@@ -167,9 +167,15 @@ final class RenderedNarration {
   final AudioTrack track;
 }
 
-/// Synthesized audio, represented either in memory or by a provider location.
+/// Synthesized audio, represented by bytes, a location, or an incoming stream.
+///
+/// The receiver owns the track and must call [dispose] when playback finishes
+/// or the track is discarded. Stream producers must retain incoming chunks
+/// until [stream] is listened to, and release network work through `onCancel`.
 final class AudioTrack {
-  AudioTrack({required this.id, this.bytes, this.location, this.duration}) {
+  AudioTrack({required this.id, this.bytes, this.location, this.duration})
+    : stream = null,
+      _onCancel = null {
     if ((bytes == null) == (location == null)) {
       throw ArgumentError('Provide exactly one of bytes or location.');
     }
@@ -180,6 +186,20 @@ final class AudioTrack {
       throw ArgumentError.value(location, 'location', 'Must not be empty.');
     }
   }
+
+  /// Creates a single-subscription stream of encoded audio chunks.
+  ///
+  /// Playback may start before the stream closes. [onCancel] must also release
+  /// an unconsumed stream; it is called at most once by [dispose].
+  AudioTrack.fromStream({
+    required this.id,
+    required Stream<List<int>> stream,
+    Future<void> Function()? onCancel,
+    this.duration,
+  }) : bytes = null,
+       location = null,
+       stream = stream,
+       _onCancel = onCancel;
 
   /// Creates a track backed by in-memory audio.
   factory AudioTrack.fromBytes({
@@ -208,7 +228,14 @@ final class AudioTrack {
   final String id;
   final Uint8List? bytes;
   final String? location;
+  final Stream<List<int>>? stream;
   final Duration? duration;
+  final Future<void> Function()? _onCancel;
+  Future<void>? _disposal;
+
+  /// Releases producer resources, including an HTTP request still in flight.
+  Future<void> dispose() =>
+      _disposal ??= Future<void>.sync(() => _onCancel?.call());
 }
 
 /// A playback handle returned once playback has actually started.

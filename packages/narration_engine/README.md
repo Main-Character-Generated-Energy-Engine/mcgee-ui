@@ -121,6 +121,9 @@ Never add the key as a Flutter asset, source literal, browser-storage value, or
 
 The Flutter host supplies an `AudioOutput` adapter for its chosen playback
 package. OpenRouter currently returns an in-memory MP3 in `AudioTrack.bytes`.
+Fused renderers may instead return `AudioTrack.fromStream`, whose `stream`
+contains encoded audio chunks. Stream-capable outputs should start playback as
+soon as enough audio has arrived instead of collecting the entire track.
 
 `AudioOutput.play` must:
 
@@ -133,6 +136,13 @@ package. OpenRouter currently returns an in-memory MP3 in `AudioTrack.bytes`.
 The engine uses this contract to serialize speech and timestamp its events. Do
 not complete `AudioPlayback.completed` immediately unless the adapter is an
 offline file sink rather than audible playback.
+
+Tracks transfer ownership to the engine when returned by a synthesizer or
+renderer, or passed to `speak(preparedTrack: ...)`. The engine calls the track's
+idempotent `dispose()` after playback, rejection, replacement, or stop. Stream
+producers should supply `onCancel` to abort outstanding network work even when
+the stream was never listened to. The host retains ownership of openings it
+prepares but never passes to `speak`, and must dispose those itself.
 
 ## Submit capture windows
 

@@ -30,6 +30,7 @@ flutter:
   uses-material-design: true
   assets:
     - lib/assets/film-opening-prompt.json
+    - lib/assets/narrator-profiles.json
     - binoculars-icon.svg
     - lib/assets/MCgEe.svg
     - lib/assets/logo.svg

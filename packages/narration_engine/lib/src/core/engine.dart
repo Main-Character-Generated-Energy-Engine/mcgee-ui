@@ -145,6 +145,10 @@ final class NarrationEngine {
     final operationGeneration = _generation;
     final preparationToken = Object();
     _activePreparation = preparationToken;
+    AudioTrack? ownedTrack;
+    StreamingSpeechSynthesis? streamingSynthesis;
+    Future<_TrackResult>? streamingTrack;
+    var transferredTrack = false;
     try {
       final now = _clock();
       final lastPlaybackFinishedAt = _lastPlaybackFinishedAt;
@@ -187,15 +191,12 @@ final class NarrationEngine {
         captures: window,
         memory: snapshot,
       );
-      StreamingSpeechSynthesis? streamingSynthesis;
-      Future<_TrackResult>? streamingTrack;
-      AudioTrack? renderedTrack;
       final NarrationDraft draft;
       final renderer = _narrationRenderer;
       if (renderer != null) {
         final rendered = await renderer.render(request);
         draft = rendered.draft;
-        renderedTrack = rendered.track;
+        ownedTrack = rendered.track;
       } else if (_narrator case final StreamingNarrationModel streamingNarrator
           when _speechSynthesizer is StreamingSpeechSynthesizer) {
         final narrationStream = await streamingNarrator.narrateStream(request);
@@ -209,21 +210,14 @@ final class NarrationEngine {
           onError: (Object error, StackTrace stackTrace) =>
               _TrackFailure(error, stackTrace),
         );
-        try {
-          draft = await narrationStream.completed;
-        } catch (_) {
-          await streamingSynthesis.cancel();
-          rethrow;
-        }
+        draft = await narrationStream.completed;
       } else {
         draft = await _narrator.narrate(request);
       }
       if (!_isCurrent(operationGeneration)) {
-        await streamingSynthesis?.cancel();
         return _skip(window, observedAt, 'The engine was stopped.');
       }
       if (!draft.shouldSpeak) {
-        await streamingSynthesis?.cancel();
         return _skip(
           window,
           observedAt,
@@ -234,18 +228,16 @@ final class NarrationEngine {
       final text = draft.text?.trim() ?? '';
       final draftReason = _policy.checkDraft(text, _memory.snapshot);
       if (draftReason != null) {
-        await streamingSynthesis?.cancel();
         return _skip(window, observedAt, draftReason.message);
       }
 
       final finalStaleness = _policy.checkStaleness(observedAt, _clock());
       if (finalStaleness != null) {
-        await streamingSynthesis?.cancel();
         return _skip(window, observedAt, finalStaleness.message);
       }
 
       final AudioTrack track;
-      if (renderedTrack case final renderedTrack?) {
+      if (ownedTrack case final renderedTrack?) {
         track = renderedTrack;
       } else if (streamingTrack case final streamingTrack?) {
         track = switch (await streamingTrack) {
@@ -256,6 +248,7 @@ final class NarrationEngine {
       } else {
         track = await _speechSynthesizer.synthesize(text);
       }
+      ownedTrack = track;
       if (!_isCurrent(operationGeneration)) {
         return _skip(window, observedAt, 'The engine was stopped.');
       }
@@ -274,6 +267,7 @@ final class NarrationEngine {
         generation: operationGeneration,
       );
       _enqueue(queued);
+      transferredTrack = true;
       _releasePreparation(preparationToken);
       return await queued.completed.future;
     } catch (error) {
@@ -285,6 +279,24 @@ final class NarrationEngine {
       );
       return NarrationOutcome.failed(observedAt: observedAt, error: error);
     } finally {
+      if (!transferredTrack) {
+        await _disposeTrack(ownedTrack);
+        // A streaming-input synthesizer may finish after its draft is rejected.
+        // Observe that result and release its track without delaying the skip.
+        final abandonedTrack = streamingTrack;
+        if (abandonedTrack != null) {
+          unawaited(abandonedTrack.then((result) async {
+            if (result case _TrackSuccess(:final track)) {
+              await _disposeTrack(track);
+            }
+          }));
+        }
+        try {
+          await streamingSynthesis?.cancel();
+        } catch (_) {
+          // Cancellation must not replace the original narration outcome.
+        }
+      }
       _releasePreparation(preparationToken);
     }
   }
@@ -294,27 +306,34 @@ final class NarrationEngine {
   /// seamlessly to generated narration.
   /// A [preparedTrack] skips synthesis, allowing the host to prepare an opening
   /// before camera permission and start it only when its title card is ready.
+  /// Ownership transfers to the engine even if the line is rejected.
   Future<NarrationOutcome> speak(String text, {AudioTrack? preparedTrack}) async {
     if (_closed) {
+      await _disposeTrack(preparedTrack);
       throw StateError('The narration engine is closed.');
     }
     final spokenText = text.trim();
     if (spokenText.isEmpty) {
+      await _disposeTrack(preparedTrack);
       throw ArgumentError.value(text, 'text', 'Must not be empty.');
     }
 
     final observedAt = _clock();
     const captures = <CapturedImage>[];
     if (_activePreparation != null) {
+      await _disposeTrack(preparedTrack);
       return _skip(captures, observedAt, SilenceReason.busy.message);
     }
 
     final operationGeneration = _generation;
     final preparationToken = Object();
     _activePreparation = preparationToken;
+    AudioTrack? ownedTrack = preparedTrack;
+    var transferredTrack = false;
     try {
       final track =
-          preparedTrack ?? await _speechSynthesizer.synthesize(spokenText);
+          ownedTrack ?? await _speechSynthesizer.synthesize(spokenText);
+      ownedTrack = track;
       if (!_isCurrent(operationGeneration)) {
         return _skip(captures, observedAt, 'The engine was stopped.');
       }
@@ -329,6 +348,7 @@ final class NarrationEngine {
         generation: operationGeneration,
       );
       _enqueue(queued);
+      transferredTrack = true;
       _releasePreparation(preparationToken);
       return await queued.completed.future;
     } catch (error) {
@@ -344,6 +364,7 @@ final class NarrationEngine {
       );
       return NarrationOutcome.failed(observedAt: observedAt, error: error);
     } finally {
+      if (!transferredTrack) await _disposeTrack(ownedTrack);
       _releasePreparation(preparationToken);
     }
   }
@@ -519,6 +540,7 @@ final class NarrationEngine {
           _completeSkipped(narration, 'The engine was stopped.');
         }
       } finally {
+        await _disposeTrack(narration.track);
         await playbackProgressSubscription?.cancel();
         _isPlayingAudio = false;
         if (identical(_activeNarration, narration)) {
@@ -542,6 +564,7 @@ final class NarrationEngine {
   }
 
   void _completeSkipped(_QueuedNarration narration, String reason) {
+    unawaited(_disposeTrack(narration.track));
     if (narration.completed.isCompleted) return;
     narration.completed.complete(
       _skip(narration.captures, narration.observedAt, reason),
@@ -572,7 +595,17 @@ final class NarrationEngine {
     if (pending != null) {
       _completeSkipped(pending, 'The engine was stopped.');
     }
-    await _audioOutput.stop();
+    final active = _activeNarration;
+    if (active != null) {
+      _completeSkipped(active, 'The engine was stopped.');
+    }
+    // Abort streamed producers before waiting on a player that may still be
+    // waiting for its first chunk. Disposing is safe if playback also finishes.
+    await Future.wait<void>([
+      _disposeTrack(pending?.track),
+      _disposeTrack(active?.track),
+      _audioOutput.stop(),
+    ]);
     _isPlayingAudio = false;
     if (clearMemory) {
       _memory.clear();
@@ -587,6 +620,14 @@ final class NarrationEngine {
     _closed = true;
     await stop();
     await _events.close();
+  }
+
+  Future<void> _disposeTrack(AudioTrack? track) async {
+    try {
+      await track?.dispose();
+    } catch (_) {
+      // Resource cleanup must not fail the playback loop or hide its outcome.
+    }
   }
 
   bool _isCurrent(int operationGeneration) {

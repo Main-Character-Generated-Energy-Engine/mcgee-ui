@@ -8,6 +8,7 @@ import 'package:narration_engine/openrouter.dart';
 import 'capture_store.dart';
 import 'film_opening.dart';
 import 'netlify_narration_renderer.dart';
+import 'narrator_profile.dart';
 
 /// Allows enough time for both multimodal writing and speech synthesis while
 /// still preventing old camera frames from entering the live audio stream.
@@ -21,18 +22,21 @@ final class OpenRouterNarrationRuntime {
     required _SelectableSpeechSynthesizer speechSynthesizer,
     required NarrationLanguage language,
     required String characterName,
+    required _NarratorSelection narratorSelection,
     NetlifyNarrationRenderer? netlifyRenderer,
   }) : _client = client,
        _engine = engine,
        _speechSynthesizer = speechSynthesizer,
        _language = language,
        _characterName = characterName,
+       _narratorSelection = narratorSelection,
        _netlifyRenderer = netlifyRenderer;
 
   factory OpenRouterNarrationRuntime({
     String? apiKey,
     required AudioOutput audioOutput,
     required String characterName,
+    required Map<String, NarratorProfile> narratorProfiles,
     OpenRouterVoiceOption voice = OpenRouterVoiceOption.morganFreeman,
     NarrationLanguage language = NarrationLanguage.english,
     String? fishAudioCredential,
@@ -40,6 +44,7 @@ final class OpenRouterNarrationRuntime {
     Uri? narrationEndpoint,
     NarrativeMemory? memory,
   }) {
+    final selection = _NarratorSelection(narratorProfiles, voice);
     final normalizedCharacterName = characterName.trim();
     if (normalizedCharacterName.isEmpty) {
       throw ArgumentError.value(
@@ -84,6 +89,7 @@ final class OpenRouterNarrationRuntime {
           maximumWords: 20,
           language: language,
           characterName: normalizedCharacterName,
+          narratorInstructions: () => selection.profile.liveInstructions,
         ),
         speechSynthesizer: speechSynthesizer,
         audioOutput: audioOutput,
@@ -92,6 +98,7 @@ final class OpenRouterNarrationRuntime {
           maximumWords: 20,
           language: language,
           characterName: normalizedCharacterName,
+          narratorInstructions: () => selection.profile.liveInstructions,
         ),
         memory: memory,
         policy: const NarrationPolicy(
@@ -115,6 +122,7 @@ final class OpenRouterNarrationRuntime {
       speechSynthesizer: speechSynthesizer,
       language: language,
       characterName: normalizedCharacterName,
+      narratorSelection: selection,
       netlifyRenderer: netlifyRenderer,
     );
   }
@@ -124,8 +132,14 @@ final class OpenRouterNarrationRuntime {
   final _SelectableSpeechSynthesizer _speechSynthesizer;
   final NarrationLanguage _language;
   final String _characterName;
+  final _NarratorSelection _narratorSelection;
+  int _voiceGeneration = 0;
+  int _pendingVoiceSwitches = 0;
   final NetlifyNarrationRenderer? _netlifyRenderer;
+  final Set<AudioTrack> _preparedTracks = {};
   bool _closed = false;
+
+  OpenRouterVoiceOption get voice => _narratorSelection.voice;
 
   Stream<NarrationEngineEvent> get events => _engine.events;
   bool get isPlaying => _engine.isPlaying;
@@ -135,19 +149,46 @@ final class OpenRouterNarrationRuntime {
     required void Function(FilmOpening) onCredits,
   }) async {
     if (_closed) throw StateError('The narration runtime is closed.');
+    final generation = _voiceGeneration;
     final opening = await (_netlifyRenderer?.generateOpening() ??
-        generateFilmOpening(_client, _language, characterName: _characterName));
-    if (_closed) throw StateError('The narration runtime is closed.');
+        generateFilmOpening(
+          _client,
+          _language,
+          characterName: _characterName,
+          profile: _narratorSelection.profile,
+        ));
+    _checkOpeningGeneration(generation);
     onCredits(opening);
     final track = await _speechSynthesizer
         .synthesize(opening.narration)
         .timeout(const Duration(seconds: 20));
+    try {
+      _checkOpeningGeneration(generation);
+    } catch (_) {
+      await track.dispose();
+      rethrow;
+    }
+    _preparedTracks.add(track);
+    final prepared = PreparedFilmOpening(opening: opening, track: track);
+    _preparedOpeningGenerations[prepared] = generation;
+    return prepared;
+  }
+
+  final Expando<int> _preparedOpeningGenerations = Expando<int>();
+
+  void _checkOpeningGeneration(int generation) {
     if (_closed) throw StateError('The narration runtime is closed.');
-    return PreparedFilmOpening(opening: opening, track: track);
+    if (generation != _voiceGeneration) {
+      throw StateError('The narrator changed while preparing the opening.');
+    }
   }
 
   Future<NarrationOutcome> speakOpening(PreparedFilmOpening opening) {
     if (_closed) throw StateError('The narration runtime is closed.');
+    final generation = _preparedOpeningGenerations[opening];
+    if (generation == null) throw StateError('Opening belongs to another runtime.');
+    _checkOpeningGeneration(generation);
+    _preparedTracks.remove(opening.track);
     return _engine.speak(
       opening.opening.narration,
       preparedTrack: opening.track,
@@ -159,6 +200,7 @@ final class OpenRouterNarrationRuntime {
     required DateTime capturedAt,
   }) async {
     if (_closed) throw StateError('The narration runtime is closed.');
+    if (_pendingVoiceSwitches > 0) return null;
     final latestCapture = CapturedImage(
       source: 'webcam',
       capturedAt: capturedAt,
@@ -169,19 +211,40 @@ final class OpenRouterNarrationRuntime {
     return _engine.submit(<CapturedImage>[latestCapture]);
   }
 
-  Future<void> stop() => _engine.stop();
+  Future<void> stop() {
+    _netlifyRenderer?.cancelPending();
+    return _engine.stop();
+  }
 
-  void setVoice(OpenRouterVoiceOption voice) {
+  Future<void> setVoice(OpenRouterVoiceOption voice) async {
     if (_closed) throw StateError('The narration runtime is closed.');
+    _narratorSelection.select(voice);
+    _voiceGeneration++;
+    _pendingVoiceSwitches++;
     _speechSynthesizer.voice = voice;
     _netlifyRenderer?.voice = voice;
+    _netlifyRenderer?.cancelPending();
+    for (final track in _preparedTracks) {
+      unawaited(track.dispose());
+    }
+    _preparedTracks.clear();
+    try {
+      // stop invalidates prefetched and in-flight work synchronously.
+      await _engine.stop();
+    } finally {
+      _pendingVoiceSwitches--;
+    }
   }
 
   Future<void> close() async {
     if (_closed) return;
     _closed = true;
-    await _engine.close();
     _netlifyRenderer?.close();
+    for (final track in _preparedTracks) {
+      await track.dispose();
+    }
+    _preparedTracks.clear();
+    await _engine.close();
     _client.close();
   }
 }
@@ -341,5 +404,24 @@ final class _BufferedOpenRouterSynthesis implements StreamingSpeechSynthesis {
         StateError('Streaming speech synthesis was cancelled.'),
       );
     }
+  }
+}
+
+final class _NarratorSelection {
+  _NarratorSelection(this.profiles, OpenRouterVoiceOption initialVoice) {
+    select(initialVoice);
+  }
+
+  final Map<String, NarratorProfile> profiles;
+  late OpenRouterVoiceOption voice;
+  late NarratorProfile profile;
+
+  void select(OpenRouterVoiceOption nextVoice) {
+    final nextProfile = profiles[nextVoice.name];
+    if (nextProfile == null) {
+      throw ArgumentError.value(nextVoice.name, 'voice', 'Missing narrator profile.');
+    }
+    voice = nextVoice;
+    profile = nextProfile;
   }
 }

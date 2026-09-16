@@ -15,6 +15,7 @@ final class OpenRouterNarrationModel implements StreamingNarrationModel {
     this.includeCaptures = false,
     this.language = NarrationLanguage.english,
     this.characterName,
+    this.narratorInstructions,
   }) : _delegate = OpenAiNarrationModel(
          client: client,
          model: model,
@@ -24,6 +25,7 @@ final class OpenRouterNarrationModel implements StreamingNarrationModel {
          includeCaptures: includeCaptures,
          language: language,
          characterName: characterName,
+         narratorInstructions: narratorInstructions,
        );
 
   final String model;
@@ -33,6 +35,9 @@ final class OpenRouterNarrationModel implements StreamingNarrationModel {
   final bool includeCaptures;
   final NarrationLanguage language;
   final String? characterName;
+
+  /// Current host-supplied mode; evaluated for each request.
+  final String Function()? narratorInstructions;
   final OpenAiNarrationModel _delegate;
 
   @override

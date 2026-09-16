@@ -51,7 +51,7 @@ void main() {
       );
       expect(
         narrationBody['instructions'],
-        contains('Describe the visible action first'),
+        contains('Invent and sustain character motives'),
       );
       final narrationInput = narrationBody['input'] as List;
       final narrationContent =
@@ -72,6 +72,39 @@ void main() {
       expect(track.bytes, [0x49, 0x44, 0x33]);
     },
   );
+
+  test('OpenRouter forwards selected mode for structured and streamed writing', () async {
+    var mode = 'Past-tense recollection; the narrator may say I.';
+    final api = _FakeStreamingOpenRouterApi();
+    final structuredApi = _FakeOpenRouterApi();
+    final model = OpenRouterNarrationModel(
+      client: structuredApi,
+      narratorInstructions: () => mode,
+    );
+    final streamingModel = OpenRouterNarrationModel(
+      client: api,
+      requireSpokenLine: true,
+      narratorInstructions: () => mode,
+    );
+    const request = NarrationRequest(
+      prompt: 'Continue the earlier story.',
+      observation: SceneObservation(description: 'A visible mug.', fingerprint: 'mug'),
+      captures: [],
+      memory: NarrativeMemorySnapshot(),
+    );
+    for (final nextMode in [mode, 'Present-tense survival documentary.', 'Current breaking-news coverage.']) {
+      mode = nextMode;
+      await model.narrate(request);
+      final stream = await streamingModel.narrateStream(request);
+      await stream.textDeltas.drain<void>();
+      await stream.completed;
+      for (final body in [structuredApi.responseBodies.last, api.streamingResponseBodies.last]) {
+        expect(body['instructions'], contains(mode));
+        expect(body['instructions'], isNot(contains('exclusively in the third person')));
+        expect(body['instructions'], isNot(contains('Keep the stakes small')));
+      }
+    }
+  });
 
   test('keeps actor voices paired with their provider models', () async {
     final api = _FakeOpenRouterApi();
@@ -139,7 +172,7 @@ void main() {
       body['instructions'],
       contains('Output only the exact words to speak'),
     );
-    expect(body['instructions'], contains('Describe the visible action first'));
+    expect(body['instructions'], contains('Invent and sustain character motives'));
     expect(
       (body['instructions'] as String).toLowerCase(),
       isNot(contains('silence')),

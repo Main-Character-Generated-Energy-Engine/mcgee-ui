@@ -4,6 +4,8 @@ import { narrationLanguageInstruction, narrationLanguageName } from "../netlify/
 
 import {
   decodeSse,
+  containsCharacterName,
+  violatesNameCadence,
   openRouterNarrationBody,
   parseNarrationEnvelope,
   renderNarration,
@@ -127,14 +129,17 @@ test("builds a latency-ranked low-detail multimodal request", () => {
   assert.equal(body.text.format.schema.properties.current_activity.maxLength, 240);
   assert.equal(body.text.format.schema.properties.open_thread.maxLength, 400);
   assert.match(body.instructions, /only in Catalan/);
-  assert.match(body.instructions, /Describe the visible action first/);
-  assert.match(body.instructions, /exclusively in the third person/);
-  assert.match(body.instructions, /never use first- or/);
-  assert.match(body.instructions, /inner monologue only as indirect narration/);
+  assert.match(body.instructions, /Invent and sustain character motives/);
+  assert.match(body.instructions, /LIVE COVERAGE/);
+  assert.match(body.instructions, /present tense/);
+  assert.match(body.instructions, /monologue only as indirect narration/);
   assert.match(body.instructions, /The last spoken line is/);
   assert.match(body.instructions, /protagonist is named "Ari"/);
   assert.match(body.instructions, /Do not restart the premise/);
-  assert.match(body.instructions, /Never invent unseen/);
+  assert.match(body.instructions, /Do not\nclaim to see an absent object/);
+  assert.match(body.instructions, /inherit its exact premise/);
+  assert.match(body.instructions, /An unchanged image or a\ncamera cut does not retire it/);
+  assert.match(body.instructions, /Do not add unspoken plot developments/);
   assert.match(body.input[0].content[0].text, /Explicit episode state/);
   assert.equal(body.input[0].content[1].text, payload.prompt);
   assert.equal(body.input[0].content.at(-1).detail, "low");
@@ -170,7 +175,7 @@ test("parses and validates explicit evolving story state", () => {
     current_activity: "waiting",
     open_thread: "find the page",
     recurring_elements: [],
-  }), "Ari"), /omitted the protagonist name/);
+  }), "Ari"), /name cadence/);
 });
 
 test("renders only the spoken field and returns the updated story state", async () => {
@@ -231,4 +236,141 @@ test("decodes fragmented and multiline SSE data", async () => {
   const events = [];
   for await (const event of decodeSse(source)) events.push(event);
   assert.deepEqual(events, [{ type: "response.output_text.delta", delta: "Hello" }]);
+});
+
+
+test("requires an occasional name mention after three unnamed beats", () => {
+  const history = ["Ari needs an excuse.", "The plan fails.", "A delay helps."];
+  assert.equal(violatesNameCadence("The excuse gives Ari another chance.", { recentNarrations: history }, "Ari"), true);
+  assert.equal(violatesNameCadence("The excuse finally works.", { recentNarrations: history }, "Ari"), false);
+  history.push("The delay backfires.");
+  assert.equal(violatesNameCadence("The excuse gives Ari another chance.", { recentNarrations: history }, "Ari"), false);
+  assert.equal(violatesNameCadence("Ari considers another excuse.", { recentNarrations: history }, "Ari"), false);
+  assert.equal(violatesNameCadence("The excuse finally works.", { recentNarrations: history }, "Ari"), true);
+  history.push("Ari considers another excuse.");
+  assert.equal(violatesNameCadence("Ari needs more time.", { recentNarrations: history }, "Ari"), true);
+  assert.equal(containsCharacterName("Paris is quiet.", "Ari"), false);
+  assert.equal(containsCharacterName("Ari’s excuse fails.", "Ari"), true);
+  assert.equal(containsCharacterName("The plan suits Éloïse.", "Éloïse"), true);
+});
+
+test("repairs repetitive naming before speech and speaks only the accepted draft", async () => {
+  const payload = validatePayload({
+    prompt: "Continue the excuse story.", characterName: "Ari", language: "en", voice: "jade",
+    story: { recentNarrations: ["Ari wanted to avoid another apology."] },
+    capture: { capturedAt: "2026-09-16T10:00:00Z", mediaType: "image/jpeg", bytesBase64: "AQID" },
+  });
+  let writes = 0;
+  const spoken = [];
+  const result = await renderNarration(payload, {
+    openRouterApiKey: "test-only",
+    fetchImpl: async (url, options) => {
+      const body = JSON.parse(options.body);
+      if (url.includes("/responses")) {
+        writes++;
+        if (writes === 2) assert.match(body.instructions, /REWRITE:/);
+        const envelope = { narration: writes === 1 ? "Ari needs a better excuse." : "The excuse needs a little work before another apology becomes unavoidable.",
+          story_summary: "Fiction: an excuse might avoid another apology.", current_activity: "waiting",
+          open_thread: "avoid another apology", recurring_elements: ["excuse"] };
+        return new Response(`data: ${JSON.stringify({ type: "response.output_text.delta", delta: JSON.stringify(envelope) })}\n\ndata: [DONE]\n\n`);
+      }
+      spoken.push(body.input);
+      return new Response(Uint8Array.from([0x49, 0x44, 0x33]));
+    },
+  });
+  assert.equal(writes, 2);
+  assert.deepEqual(spoken, [result.text]);
+  assert.equal(containsCharacterName(result.text, "Ari"), false);
+  assert.equal(payload.story.recentNarrations.length, 1);
+});
+
+test("never synthesizes either draft when the name-cadence rewrite also fails", async () => {
+  const payload = validatePayload({
+    prompt: "Continue.", characterName: "Ari", language: "en", voice: "jade",
+    story: { recentNarrations: ["Ari wanted an excuse."] },
+    capture: { capturedAt: "2026-09-16T10:00:00Z", mediaType: "image/jpeg", bytesBase64: "AQID" },
+  });
+  let writes = 0;
+  await assert.rejects(renderNarration(payload, {
+    openRouterApiKey: "test-only",
+    fetchImpl: async (url) => {
+      assert.match(url, /\/responses$/);
+      writes++;
+      const envelope = { narration: "Ari needs an excuse.", story_summary: "An excuse is needed.",
+        current_activity: "waiting", open_thread: "find an excuse", recurring_elements: [] };
+      return new Response(`data: ${JSON.stringify({ type: "response.output_text.delta", delta: JSON.stringify(envelope) })}\n\ndata: [DONE]\n\n`);
+    },
+  }), /name cadence/);
+  assert.equal(writes, 2);
+});
+
+test("rewrites a missing name when the next occasional mention is due", async () => {
+  const payload = validatePayload({
+    prompt: "Continue the unfinished reply.", characterName: "Ari", language: "en", voice: "jade",
+    story: { recentNarrations: ["Ari needed to reply.", "The message could wait.", "The delay was not helping.", "A short answer would do."] },
+    capture: { capturedAt: "2026-09-16T10:00:00Z", mediaType: "image/jpeg", bytesBase64: "AQID" },
+  });
+  let writes = 0;
+  const spoken = [];
+  await renderNarration(payload, {
+    openRouterApiKey: "test-only",
+    fetchImpl: async (url, options) => {
+      const body = JSON.parse(options.body);
+      if (url.includes("/responses")) {
+        writes++;
+        if (writes === 2) {
+          assert.match(body.instructions, /REWRITE: Correct the character name usage/);
+          assert.match(body.instructions.split("REWRITE:")[1], /Use the supplied character name exactly once/);
+          assert.doesNotMatch(body.instructions.split("REWRITE:")[1], /Omit the name/);
+        }
+        const envelope = {
+          narration: writes === 1 ? "The short reply was finally beginning to sound like a workable option." :
+            "Ari could settle for a short reply; another delay would not make it easier.",
+          story_summary: "Fiction: a short reply might end the delay.", current_activity: "waiting",
+          open_thread: "answer the message", recurring_elements: ["reply"],
+        };
+        return new Response(`data: ${JSON.stringify({ type: "response.output_text.delta", delta: JSON.stringify(envelope) })}\n\ndata: [DONE]\n\n`);
+      }
+      spoken.push(body.input);
+      return new Response(Uint8Array.from([0x49, 0x44, 0x33]));
+    },
+  });
+  assert.equal(writes, 2);
+  assert.equal(spoken.length, 1);
+  assert.equal(containsCharacterName(spoken[0], "Ari"), true);
+});
+
+
+test("live modes preserve opening continuity while defining distinct tense and narration", () => {
+  const cases = [
+    ["morgan-freeman", /CONTINUE THE NARRATOR'S RECOLLECTION/, /past tense even though images arrive live/],
+    ["david-attenborough", /SPECIMEN'S FIGHT FOR SURVIVAL/, /present-tense, third-person natural-history/],
+    ["jade", /LIVE COVERAGE OF THE DEVELOPING INCIDENT/, /present tense and the grave, urgent voice/],
+  ];
+  const seen = new Set();
+  for (const [voice, mode, tense] of cases) {
+    const payload = validatePayload({
+      voice, characterName: "Ari", prompt: "Continue from the opening.",
+      story: { recentNarrations: ["An abstract legacy opening about Ari."] },
+      capture: { capturedAt: "2026-09-16T10:00:00Z", mediaType: "image/jpeg", bytesBase64: "AQID" },
+    });
+    const body = openRouterNarrationBody(payload);
+    assert.match(body.instructions, mode);
+    assert.match(body.instructions, tense);
+    assert.match(body.instructions, /inherit its exact premise/);
+    assert.match(body.instructions, /Never switch narrator/);
+    assert.match(body.instructions, /Do not invent unseen supporting characters/);
+    assert.match(body.instructions, /change the fictional strategy or reach a provisional payoff/);
+    assert.match(body.instructions, /Omit the character name in this passage/);
+    assert.doesNotMatch(body.instructions, /exclusively in the third person|Never substitute a generic label|Keep the stakes small/);
+    seen.add(body.instructions);
+  }
+  assert.equal(seen.size, 3);
+});
+
+test("voice validation rejects inherited object keys", () => {
+  for (const voice of ["toString", "__proto__", ["jade"]]) {
+    assert.throws(() => validateSpeechPayload({ voice, text: "A report." }), /Unsupported narrator/);
+    assert.throws(() => validatePayload({ voice, prompt: "Continue." }), /Unsupported narrator/);
+  }
 });

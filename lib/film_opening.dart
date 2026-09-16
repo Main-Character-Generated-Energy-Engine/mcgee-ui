@@ -4,6 +4,8 @@ import 'package:flutter/services.dart';
 import 'package:narration_engine/narration_engine.dart';
 import 'package:narration_engine/openai.dart';
 
+import 'narrator_profile.dart';
+
 /// Fictional credits and scene-independent voiceover generated before capture.
 final class FilmOpening {
   const FilmOpening({
@@ -47,7 +49,9 @@ Future<FilmOpening> generateFilmOpening(
   OpenAiApi client,
   NarrationLanguage language, {
   required String characterName,
+  NarratorProfile? profile,
 }) async {
+  final selectedProfile = profile ?? (await loadNarratorProfiles())['morgan-freeman']!;
   final config =
       jsonDecode(
             await rootBundle.loadString('lib/assets/film-opening-prompt.json'),
@@ -60,11 +64,16 @@ Future<FilmOpening> generateFilmOpening(
         // High reasoning effort consumes this same budget before the JSON.
         'max_output_tokens': 2400,
         'store': false,
-        'instructions': config['instructions'],
+        'instructions': '${config['instructions']}\n'
+            '${selectedProfile.openingInstructions}',
         'input': 'Create a new opening in ${language.englishName}. The '
             'protagonist name is ${jsonEncode(characterName)}.',
       })
       .timeout(const Duration(seconds: 30));
+  return _openingFromResponse(response);
+}
+
+FilmOpening _openingFromResponse(Map<String, Object?> response) {
   if (response['status'] == 'incomplete' || response['error'] != null) {
     throw const FormatException('Opening generation did not complete.');
   }

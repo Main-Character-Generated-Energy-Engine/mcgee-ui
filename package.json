@@ -3,6 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "dev:functions": "netlify dev --framework '#static' --dir web --port 8888 --no-open",
+    "deploy": "npm test && flutter test && flutter build web --release && netlify deploy --prod --dir=build/web --functions=netlify/functions",
     "test": "node --test test/*_test.mjs"
   },
   "dependencies": {
