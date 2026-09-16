@@ -109,6 +109,7 @@ final class OpenRouterNarrationRuntime {
           minimumSalience: 0,
           sceneLookback: 0,
           maximumWords: 20,
+          openingHandoffMaximumWords: 35,
           rejectRepeatedNarration: false,
         ),
         maxCapturesPerObservation: 1,

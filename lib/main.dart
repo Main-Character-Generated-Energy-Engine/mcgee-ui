@@ -6,10 +6,10 @@ import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:narration_engine/narration_engine.dart';
 import 'package:narration_engine/openrouter.dart';
 
+import 'app_fonts.dart';
 import 'audio_output.dart';
 import 'capture_store.dart';
 import 'film_opening.dart';
@@ -23,8 +23,9 @@ import 'openrouter_key_loader.dart';
 import 'openrouter_runtime.dart';
 import 'user_profile_store.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await AppFonts.load();
   runApp(const MainApp());
 }
 
@@ -38,6 +39,7 @@ class MainApp extends StatelessWidget {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
+        fontFamily: AppFonts.bodyFamily,
         brightness: Brightness.dark,
         colorScheme: ColorScheme.fromSeed(
           seedColor: const Color(0xff8ee6c7),
@@ -516,6 +518,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
         _creditsController.reset();
         _experienceStage = _ExperienceStage.cameraConsent;
       });
+      String? loggedVoice;
       _narrationEventSubscription = runtime.events.listen((event) {
         if (!mounted || !identical(runtime, _narrationRuntime)) return;
         if (event case NarrationFailed(:final error)) {
@@ -536,7 +539,11 @@ class _CameraCapturePageState extends State<CameraCapturePage>
             final kind = event.captures.isEmpty ? 'opening' : 'live';
             final line = event.text.replaceAll(RegExp(r'\s+'), ' ').trim();
             final voice = _actors[_selectedActor]!.name;
-            debugPrint('[MCGEE narration] $timestamp [$kind][$voice] $line');
+            final header = loggedVoice != voice || kind == 'opening'
+                ? '[narration start][$voice] $timestamp\n'
+                : '';
+            loggedVoice = voice;
+            debugPrint('$header[$kind] [$timestamp]\n$line\n');
           }
           unawaited(
             _narrativeMemoryStore
@@ -820,7 +827,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
       return const SizedBox.expand(child: ColoredBox(color: Colors.black));
     }
     return DefaultTextStyle.merge(
-      style: GoogleFonts.cormorantGaramond(),
+      style: AppFonts.openingStyle,
       child: FilmOpeningCredits(opening: opening, animation: _creditsController),
     );
   }

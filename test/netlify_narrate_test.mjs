@@ -137,13 +137,42 @@ test("builds a latency-ranked low-detail multimodal request", () => {
   assert.match(body.instructions, /protagonist is named "Ari"/);
   assert.match(body.instructions, /Do not restart the premise/);
   assert.match(body.instructions, /Do not\nclaim to see an absent object/);
-  assert.match(body.instructions, /inherit its exact premise/);
+  assert.match(body.instructions, /inherit its premise and/);
   assert.match(body.instructions, /An unchanged image or a\ncamera cut does not retire it/);
   assert.match(body.instructions, /Do not add unspoken plot developments/);
   assert.match(body.input[0].content[0].text, /Explicit episode state/);
   assert.equal(body.input[0].content[1].text, payload.prompt);
   assert.equal(body.input[0].content.at(-1).detail, "low");
   assert.match(body.input[0].content.at(-1).image_url, /^data:image\/jpeg;base64,/);
+});
+
+test("only the opening handoff receives the longer scene-setting passage", () => {
+  const openingStory = {
+    summary: "",
+    recentNarrations: ["I remembered Ari wanting certainty before he could begin."],
+  };
+  const bodyFor = (story) => openRouterNarrationBody(validatePayload({
+    prompt: "Continue the recollection.", voice: "morgan-freeman",
+    characterName: "Ari", story,
+    capture: {
+      capturedAt: "2026-09-16T12:00:00.000Z", mediaType: "image/jpeg",
+      bytesBase64: Buffer.from([1, 2, 3]).toString("base64"),
+    },
+  }));
+  const first = bodyFor(openingStory);
+  assert.match(first.instructions, /25 to 35 words in two connected sentences/);
+  assert.doesNotMatch(first.instructions, /10 to 20 words/);
+  for (const story of [
+    { recentNarrations: [] },
+    { ...openingStory, recentNarrations: [...openingStory.recentNarrations, "He hesitated."] },
+    { ...openingStory, summary: "Earlier spoken developments." },
+    { ...openingStory, canon: { open_thread: "An ongoing inner conflict." } },
+    { ...openingStory, openThread: "An ongoing inner conflict." },
+  ]) {
+    const next = bodyFor(story);
+    assert.match(next.instructions, /10 to 20 words in one confident, complete sentence/);
+    assert.doesNotMatch(next.instructions, /25 to 35 words/);
+  }
 });
 
 test("parses and validates explicit evolving story state", () => {
@@ -357,7 +386,7 @@ test("live modes preserve opening continuity while defining distinct tense and n
     const body = openRouterNarrationBody(payload);
     assert.match(body.instructions, mode);
     assert.match(body.instructions, tense);
-    assert.match(body.instructions, /inherit its exact premise/);
+    assert.match(body.instructions, /inherit its premise and/);
     assert.match(body.instructions, /Never switch narrator/);
     assert.match(body.instructions, /Do not invent unseen supporting characters/);
     assert.match(body.instructions, /change the fictional strategy or reach a provisional payoff/);

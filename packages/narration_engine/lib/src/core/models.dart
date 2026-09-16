@@ -73,6 +73,10 @@ final class NarrativeMemorySnapshot {
 
   /// Bounded recap of spoken beats older than [recentNarrations].
   final String storySummary;
+
+  /// The host's image-free opening has no structured scene or story state yet.
+  bool get hasOnlyOpening =>
+      recentNarrations.length == 1 && storySummary.isEmpty && canon.isEmpty;
 }
 
 final class NarrationMemoryEntry {

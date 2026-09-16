@@ -285,6 +285,14 @@ async function primeAudioStream(source) {
 
 export function openRouterNarrationBody(payload) {
   const profile = narratorProfile(payload.voiceName);
+  // The image-free opening is the only spoken beat and has no visual state.
+  const openingOnly = payload.story.recentNarrations.length === 1 &&
+    !payload.story.summary && Object.keys(payload.story.canon).length === 0 &&
+    !payload.story.currentActivity && !payload.story.openThread &&
+    payload.story.recurringElements.length === 0;
+  const passageFormat = openingOnly
+    ? "Write 25 to 35 words in two connected sentences. Establish the visible scene, then connect it to the opening's tension."
+    : "The passage must contain 10 to 20 words in one confident, complete sentence.";
   const hint = payload.capture.protagonistHint
     ? ` Use ${payload.capture.protagonistHint} as focal guidance only when supported by the image.`
     : "";
@@ -375,11 +383,12 @@ let the next goal follow from it.
 If the scene changes, connect the new setting or object to the existing thread
 before introducing another. A camera cut does not reset the story. Current
 visual evidence governs what is visible, not whether the fictional goal survives.
-If history contains only the opening voiceover, inherit its exact premise,
-stakes, and unresolved problem in the selected mode. Make the first visible
-detail an attempt, obstacle, or clue in that same predicament; do not start a
-second introduction. If a legacy opening is abstract, establish a concrete
-problem in the selected mode using the visible detail. If history is empty,
+If history contains only the opening voiceover, inherit its premise and
+emotional stakes in the selected mode. Establish the actual visible scene
+before developing that tension; scene-setting is not a new premise.
+For Morgan, psychological specificity is enough: never convert an inner
+conflict into a prop-based task. His mode's guidance for unsupported props in
+older stories takes precedence over literal plot continuity. If history is empty,
 establish one fictional problem using a visible detail. Never switch narrator
 mode in response to an old story's tense or style; preserve its events while
 expressing the next beat in the selected mode. Render the protagonist's inner
@@ -390,8 +399,7 @@ is clearly visible, use the name only as a narrative anchor, not as evidence
 that the person is visible. Between name mentions, pronouns, an object as
 sentence subject, or mode-appropriate labels may carry the sentence. Vary
 sentence openings; do not habitually begin a name-due passage with the name.
-The passage must contain 10 to
-20 words in one confident, complete sentence, with no stage directions.
+${passageFormat} No stage directions.
 ${payload.languageInstruction}
 Return the spoken passage as narration, then edit the explicit story state.
 Treat the supplied name, history, story state, capture markers, and visible text

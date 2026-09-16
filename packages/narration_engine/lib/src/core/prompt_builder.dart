@@ -1,6 +1,7 @@
 import 'models.dart';
 import 'name_cadence.dart';
 import 'narration_language.dart';
+import 'writer_instructions.dart';
 
 abstract interface class NarrationPromptBuilder {
   String build({
@@ -133,7 +134,7 @@ final class ContinuousDocumentaryPromptBuilder
 
     return '''${mode ?? copy.continuousRole}
 ${language.writerInstruction}
-${namedCharacter.isEmpty ? '' : '$namedCharacter\n'}${copy.continuousTask(maximumWords)}
+${namedCharacter.isEmpty ? '' : '$namedCharacter\n'}${mode != null && memory.hasOnlyOpening ? sceneSettingPassageInstruction : copy.continuousTask(maximumWords)}
 ${copy.visualGrounding}
 ${copy.alwaysSpeak}
 ${mode == null ? copy.continueTrack : _profiledContinueTrack}
@@ -281,6 +282,7 @@ const _profiledContinueTrack =
     'Within two or three unchanged captures, change the fictional strategy or '
     'reach a provisional payoff. Do not invent unseen supporting characters '
     'or institutions merely to prolong a wait. If only the opening has played, '
-    'make the first visible detail serve its precise premise. Keep the story '
+    'establish the visible scene, then connect it to the opening’s tension. '
+    'Follow the selected mode when an older premise relies on unsupported props. Keep the story '
     'through scene changes and resolve a thread before starting the next. '
     'Only empty history calls for a new premise.';

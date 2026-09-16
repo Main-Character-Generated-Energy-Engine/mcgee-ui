@@ -43,12 +43,14 @@ final class NarrationPolicy {
     this.minimumSalience = 0.25,
     this.sceneLookback = 2,
     this.maximumWords = 30,
+    this.openingHandoffMaximumWords,
     this.duplicateThreshold = 0.72,
     this.rejectRepeatedNarration = true,
   }) : assert(maxNarrationsPerWindow > 0),
        assert(minimumSalience >= 0 && minimumSalience <= 1),
        assert(sceneLookback >= 0),
        assert(maximumWords > 0),
+       assert(openingHandoffMaximumWords == null || openingHandoffMaximumWords > 0),
        assert(duplicateThreshold >= 0 && duplicateThreshold <= 1);
 
   final Duration minimumGap;
@@ -60,6 +62,7 @@ final class NarrationPolicy {
   final double minimumSalience;
   final int sceneLookback;
   final int maximumWords;
+  final int? openingHandoffMaximumWords;
   final double duplicateThreshold;
   final bool rejectRepeatedNarration;
 
@@ -126,7 +129,10 @@ final class NarrationPolicy {
     if (text.trim().isEmpty) {
       return SilenceReason.emptyNarration;
     }
-    if (_wordCount(text) > maximumWords) {
+    final wordLimit = memory.hasOnlyOpening
+        ? openingHandoffMaximumWords ?? maximumWords
+        : maximumWords;
+    if (_wordCount(text) > wordLimit) {
       return SilenceReason.narrationTooLong;
     }
     if (rejectRepeatedNarration) {

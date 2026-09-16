@@ -62,7 +62,6 @@ class FilmOpeningCredits extends StatelessWidget {
                               'A FILM BY',
                               textAlign: TextAlign.center,
                               style: TextStyle(
-                                fontFamily: 'Roboto',
                                 fontSize: 10,
                                 height: 1.6,
                                 letterSpacing: 4,

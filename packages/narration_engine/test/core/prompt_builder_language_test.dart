@@ -74,6 +74,45 @@ void main() {
     }
   });
 
+  test('opening handoff agrees across prompts, provider, and length policy', () async {
+    final memory = NarrativeMemory();
+    memory.recordNarration(
+      text: 'I remembered Ari wanting certainty before he could begin.',
+      observedAt: DateTime.utc(2026),
+    );
+    final api = _CapturingApi();
+    final model = OpenAiNarrationModel(
+      client: api, continuous: true, maximumWords: 20,
+      narratorInstructions: () => 'A past-tense recollection.',
+    );
+    final builder = ContinuousDocumentaryPromptBuilder(
+      narratorInstructions: () => 'A past-tense recollection.',
+    );
+    const policy = NarrationPolicy(
+      maximumWords: 20, openingHandoffMaximumWords: 35,
+    );
+    const scene = 'A blank board stood beside him, and his hand rested against '
+        'his mouth. He had wanted certainty, but waiting had begun to feel '
+        'like another way of avoiding a start.';
+    for (final firstLive in [true, false]) {
+      final snapshot = memory.snapshot;
+      final prompt = builder.build(observation: observation, memory: snapshot);
+      await model.narrate(NarrationRequest(
+        prompt: prompt, observation: observation,
+        captures: const [], memory: snapshot,
+      ));
+      for (final instructions in [prompt, api.responseBody['instructions'] as String]) {
+        expect(instructions, contains(firstLive ? '25 to 35 words' : '10 to 20 words'));
+        expect(instructions, isNot(contains(firstLive ? '10 to 20 words' : '25 to 35 words')));
+      }
+      expect(policy.checkDraft(scene, snapshot),
+          firstLive ? isNull : SilenceReason.narrationTooLong);
+      memory.recordNarration(text: scene, observedAt: DateTime.utc(2026, 1, 1, 0, 0, 10));
+    }
+    expect(policy.checkDraft(scene, const NarrativeMemorySnapshot()),
+        SilenceReason.narrationTooLong);
+  });
+
   test('English remains the prompt builder default', () {
     final prompt = const ContinuousDocumentaryPromptBuilder(maximumWords: 20)
         .build(observation: observation, memory: memory);

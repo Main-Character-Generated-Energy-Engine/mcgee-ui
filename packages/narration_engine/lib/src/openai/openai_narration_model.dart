@@ -41,7 +41,10 @@ final class OpenAiNarrationModel implements StreamingNarrationModel {
 
   @override
   Future<NarrationDraft> narrate(NarrationRequest request) async {
-    final formatInstruction = continuous
+    final formatInstruction =
+        continuous && narratorInstructions != null && request.memory.hasOnlyOpening
+        ? sceneSettingPassageInstruction
+        : continuous
         ? 'The spoken passage must contain 10 to $maximumWords words in one confident, complete sentence, with no stage directions.'
         : 'A spoken line must be one sentence of at most $maximumWords words, with no stage directions.';
     final response = await client.createResponse({
@@ -138,7 +141,10 @@ action or outcome as an observed fact, or add unspoken plot developments.
       );
     }
 
-    final formatInstruction = continuous
+    final formatInstruction =
+        continuous && narratorInstructions != null && request.memory.hasOnlyOpening
+        ? sceneSettingPassageInstruction
+        : continuous
         ? 'The passage must contain 10 to $maximumWords words in one confident, complete sentence, with no stage directions.'
         : 'The line must be one sentence of at most $maximumWords words, with no stage directions.';
     final body = <String, Object?>{

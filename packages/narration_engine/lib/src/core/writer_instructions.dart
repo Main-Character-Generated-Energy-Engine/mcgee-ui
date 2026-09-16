@@ -1,3 +1,7 @@
+const sceneSettingPassageInstruction =
+    'Write 25 to 35 words in two connected sentences. Establish the visible '
+    'scene, then connect it to the opening’s tension. No stage directions.';
+
 /// Shared editorial rules for structured and streamed provider requests.
 /// Keep the Netlify writer instructions aligned with these rules.
 const documentaryWriterInstructions = '''
@@ -54,7 +58,10 @@ Do not restart or endlessly restate the same situation. Within two or three
 consecutive unchanged captures, change the fictional strategy or reach a
 provisional payoff. Do not invent unseen supporting characters or institutions
 merely to prolong a wait. If only the opening
-has played, use its precise premise and stakes to interpret the first image.
+has played, establish the visible scene before connecting it to the opening's
+tension. For Morgan, psychological specificity is enough; never turn an inner
+conflict into a prop-based task. Follow the selected mode's guidance for
+unsupported props in older stories rather than preserving their mechanics.
 Ground each passage in one visible action, posture, object, or spatial detail.
 Never claim an absent object, unseen movement, or unobserved outcome is visible.
 Inspect the image itself; capture markers and hints are not visual evidence.

@@ -71,6 +71,11 @@ flutter run -d chrome \
 Native IO builds can still connect directly to Fish using
 `.secrets/fishaudio-key`; those builds do not use the Netlify endpoint.
 
+At launch, the app loads bundled Cormorant Garamond in regular, medium, semibold,
+and bold before showing the first Flutter frame. The UI and opening credits use
+these local fonts without network requests or late font swaps. Only the used
+weights and their OFL license are retained from the supplied font archive.
+
 After narrator setup connects, an image-free OpenRouter request immediately
 generates a fictional film title, invented director credit, and 25–45-word
 opening voiceover in the selected narrator mode. Each opening names the saved
@@ -80,6 +85,11 @@ episode skips a new generic opening so its previous final beat remains the one
 continued by the first live capture. The shared opening prompt is
 `lib/assets/film-opening-prompt.json`; narrator-specific opening and live rules
 are in `lib/assets/narrator-profiles.json`. Native and Netlify paths share both.
+The first live passage after an opening sets the visible scene in two connected
+sentences (25–35 words); subsequent passages return to one sentence (10–20 words).
+Morgan carries an inner conflict, such as hesitation or the need for certainty,
+rather than a task dependent on unseen props. Older prop-based stories shift
+attention toward their emotional stakes without inventing a physical resolution.
 Speech preparation starts as soon as those credits arrive, during camera
 consent. The camera button presents the credits on black while acquiring the
 camera. A nine-second sequence fades the title in, holds it, fades to black,
@@ -110,16 +120,22 @@ Use localhost or HTTPS: browser camera access requires a secure context.
 Runtime failures are printed to the browser/debug console with an `[MCGEE]`
 prefix, including provider HTTP errors and stack traces when available.
 In debug builds (`flutter run -d chrome`), each narration logs once when playback
-starts, including the opening. Filter the browser or Flutter console for
-`[MCGEE narration]` and copy those lines when reporting a problem:
+starts, including the opening. Copy the narration blocks from the browser or
+Flutter console when reporting a problem:
 
 ```text
-[MCGEE narration] 2026-09-16T10:00:00.000Z [opening][morgan-freeman] I remembered when Ari...
+[narration start][morgan-freeman] 2026-09-16T10:00:00.000Z
+[opening] [2026-09-16T10:00:00.000Z]
+I remembered when Ari...
+
+[live] [2026-09-16T10:00:15.000Z]
+A blank board stood beside him...
 ```
 
-The timestamp is the actual playback start in UTC. Unplayed drafts and subtitle
-updates are not logged, and these narration logs are disabled in release builds.
-The narrator voice is included so passages can be matched to their writing mode.
+The header appears at the first playback in a connection, a new opening, or a
+voice change. Each timestamp is the actual playback start in UTC. Unplayed
+drafts and subtitle updates are not logged, and these logs are disabled in
+release builds.
 
 Keep the local function server running while QAing local changes. Editing local
 prompt assets does not update any deployed function. The narration revision
@@ -197,8 +213,8 @@ The voice selection also selects the writing mode:
 
 | Narrator | Opening | Subsequent narration |
 | --- | --- | --- |
-| Morgan Freeman | A fictional narrator recalled a specific problem, with a restrained hint of transcendence. | Everything remained in the past tense, as part of that recollection. |
-| David Attenborough | A concrete wonder of nature leads to the named human animal. | Present-tense documentary observation treats visible behavior as the specimen’s survival tactics. |
+| Morgan Freeman | A fictional narrator recalled a specific inner conflict without invented props or offscreen incidents. | Past-tense recollection develops that psychological tension through visible details. |
+| David Attenborough | A present-tense natural-history introduction to a human survival challenge. | Present-tense documentary throughout; name mentions use a definite article, such as “the Steve”. |
 | Eve (`jade` on the wire) | A grave fictional incident happening now ends with a live-feed handoff. | Present-tense reporting treats visible ordinary developments as an unfolding catastrophe. |
 
 Switching voices stops active/queued narration and invalidates in-flight work,
