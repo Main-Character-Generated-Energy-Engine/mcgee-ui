@@ -53,9 +53,17 @@ void main() {
     }
     expect(find.byKey(const ValueKey('narration-audio-error')), findsOneWidget);
     expect(
-      find.text('Opening audio could not start. Please try again.'),
+      find.text(
+        'Opening narration could not be prepared. Return to narration selection and try again.',
+      ),
       findsOneWidget,
     );
+    await tester.tap(
+      find.byKey(const ValueKey('return-to-narration-selection')),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('continue-setup-button')), findsOneWidget);
+    expect(find.byKey(const ValueKey('narration-audio-error')), findsNothing);
     await tester.pumpWidget(const SizedBox.shrink());
   });
 

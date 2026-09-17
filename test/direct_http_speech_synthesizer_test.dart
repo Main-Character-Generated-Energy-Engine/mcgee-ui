@@ -19,7 +19,7 @@ void main() {
         return http.StreamedResponse(Stream.value([1, 2, 3]), 200);
       }),
     );
-    expect(speechStartupTimeout, const Duration(seconds: 10));
+    expect(speechStartupTimeout, const Duration(seconds: 60));
     await expectLater(
       speech.synthesize('Ari opens the door.'),
       throwsA(
@@ -56,6 +56,23 @@ void main() {
     );
     speech.close();
     await audio.close();
+  });
+
+  test('slow response headers can still lead to streaming audio', () async {
+    final speech = DirectHttpSpeechSynthesizer(
+      fishApiKey: '',
+      endpoint: Uri.parse('http://localhost:8767/api/speech'),
+      voice: OpenRouterVoiceOption.morganFreeman,
+      startupTimeout: const Duration(milliseconds: 100),
+      client: MockClient.streaming((request, body) async {
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        return http.StreamedResponse(Stream.value([1, 2, 3]), 200);
+      }),
+    );
+    final track = await speech.synthesize('Ari opens the door.');
+    expect(await track.stream!.expand((bytes) => bytes).toList(), [1, 2, 3]);
+    await track.dispose();
+    speech.close();
   });
 
   test('Fish audio reaches playback before the provider finishes', () async {

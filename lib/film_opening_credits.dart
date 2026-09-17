@@ -74,7 +74,9 @@ class FilmOpeningCredits extends StatelessWidget {
                               opening.director,
                               textAlign: TextAlign.center,
                               style: TextStyle(
-                                fontSize: (width * 0.05).clamp(26.0, 42.0).toDouble(),
+                                fontSize: (width * 0.05)
+                                    .clamp(26.0, 42.0)
+                                    .toDouble(),
                                 height: 1.25,
                                 fontWeight: FontWeight.w400,
                                 letterSpacing: 1.5,
@@ -108,5 +110,74 @@ class FilmOpeningCredits extends StatelessWidget {
     }
     if (ms <= fadeOut) return 1;
     return 1 - Curves.easeInOut.transform((ms - fadeOut) / (end - fadeOut));
+  }
+}
+
+/// Extra title cards shown while an opening voiceover is still loading.
+class OpeningWaitingTitles extends StatelessWidget {
+  const OpeningWaitingTitles({
+    super.key,
+    required this.titles,
+    required this.animation,
+  });
+
+  static const duration = Duration(seconds: 10);
+
+  final List<String> titles;
+  final Animation<double> animation;
+
+  @override
+  Widget build(BuildContext context) {
+    final width = MediaQuery.sizeOf(context).width;
+    return ColoredBox(
+      color: Colors.black,
+      child: SafeArea(
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 48),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 900),
+              child: AnimatedBuilder(
+                animation: animation,
+                builder: (context, _) => Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    for (var index = 0; index < titles.length; index++)
+                      Opacity(
+                        key: ValueKey('opening-waiting-title-$index'),
+                        opacity: _opacity(
+                          animation.value * titles.length - index,
+                        ),
+                        child: Text(
+                          titles[index].toUpperCase(),
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: (width * 0.055)
+                                .clamp(24.0, 46.0)
+                                .toDouble(),
+                            height: 1.2,
+                            fontWeight: FontWeight.w400,
+                            letterSpacing: 2,
+                            color: const Color(0xffeee9dd),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  static double _opacity(double progress) {
+    if (progress <= 0 || progress >= 1) return 0;
+    if (progress < 0.2) return Curves.easeInOut.transform(progress / 0.2);
+    if (progress > 0.8) {
+      return 1 - Curves.easeInOut.transform((progress - 0.8) / 0.2);
+    }
+    return 1;
   }
 }

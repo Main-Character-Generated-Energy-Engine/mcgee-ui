@@ -6,7 +6,9 @@ import 'package:http/http.dart' as http;
 import 'package:mcgee/narration_engine.dart';
 import 'package:mcgee/openrouter.dart';
 
-const speechStartupTimeout = Duration(seconds: 10);
+// Fish's free tier has no latency guarantee. The UI reports a slow opening
+// after five seconds, while this deadline allows the same request to recover.
+const speechStartupTimeout = Duration(seconds: 60);
 
 /// Browser-compatible, streaming Fish Audio HTTP TTS.
 final class DirectHttpSpeechSynthesizer implements SpeechSynthesizer {
@@ -73,6 +75,9 @@ final class DirectHttpSpeechSynthesizer implements SpeechSynthesizer {
           ..body = jsonEncode(body);
     final http.StreamedResponse response;
     try {
+      debugPrint(
+        '[MCGEE] $source speech request sent; waiting for response headers.',
+      );
       response = await _client
           .send(request)
           .timeout(
@@ -82,6 +87,9 @@ final class DirectHttpSpeechSynthesizer implements SpeechSynthesizer {
               startupTimeout,
             ),
           );
+      debugPrint(
+        '[MCGEE] $source speech response: HTTP ${response.statusCode} after ${started.elapsedMilliseconds} ms.',
+      );
     } catch (_) {
       if (!abort.isCompleted) abort.complete();
       _requests.remove(abort);

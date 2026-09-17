@@ -81,6 +81,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
       _mockFrames != null || (_controller?.value.isInitialized ?? false);
   late final AnimationController _entryController;
   late final AnimationController _creditsController;
+  late final AnimationController _waitingTitlesController;
   late final CurvedAnimation _previewEntry;
   Timer? _captureTimer;
   StreamSubscription<NarrationEngineEvent>? _narrationEventSubscription;
@@ -89,12 +90,17 @@ class _CameraCapturePageState extends State<CameraCapturePage>
   OpenRouterNarrationRuntime? _narrationRuntime;
   String? _error;
   String? _audioError;
+  String? _openingPreparationFailure;
   Timer? _openingAudioTimer;
+  Timer? _openingWaitingTitlesTimer;
+  bool _showWaitingTitles = false;
+  DateTime? _titlesFadedAt;
   String? _visibleNarrationPhrase;
   bool _isCapturing = false;
   bool _isInitializingCamera = false;
   bool _isAppActive = true;
   bool _isConnecting = false;
+  bool _isReturningToSelection = false;
   bool _narrationUnavailable = false;
   bool _hasStartedNarrationAudio = false;
   bool _isNarrationPlaying = false;
@@ -152,6 +158,18 @@ class _CameraCapturePageState extends State<CameraCapturePage>
       vsync: this,
       duration: FilmOpeningCredits.duration,
     );
+    _waitingTitlesController = AnimationController(
+      vsync: this,
+      duration: OpeningWaitingTitles.duration,
+    );
+    _creditsController.addStatusListener((status) {
+      if (status == AnimationStatus.completed &&
+          _experienceStage == _ExperienceStage.opening &&
+          !_hasStartedNarrationAudio) {
+        _titlesFadedAt = DateTime.now();
+        _startOpeningAudioDeadline(_cameraGeneration);
+      }
+    });
     _previewEntry = CurvedAnimation(
       parent: _entryController,
       curve: Curves.easeInOut,
@@ -186,7 +204,12 @@ class _CameraCapturePageState extends State<CameraCapturePage>
   }
 
   Future<void> _continueSetup() async {
-    if (_isLoadingProfile || _isSavingProfile || _isConnecting) return;
+    if (_isLoadingProfile ||
+        _isSavingProfile ||
+        _isConnecting ||
+        _isReturningToSelection) {
+      return;
+    }
     late final String name;
     try {
       name = _isEditingName || _userName == null
@@ -235,9 +258,6 @@ class _CameraCapturePageState extends State<CameraCapturePage>
       return;
     }
     final generation = ++_cameraGeneration;
-    if (!_startupLineRequested && _narrationRuntime != null) {
-      _startOpeningAudioDeadline(generation);
-    }
     setState(() {
       _isInitializingCamera = true;
       _error = null;
@@ -263,12 +283,19 @@ class _CameraCapturePageState extends State<CameraCapturePage>
           if (!_startupLineRequested) {
             _experienceStage = _ExperienceStage.opening;
             _creditsController.reset();
+            _showWaitingTitles = false;
+            if (_filmOpening != null) _audioError = null;
           }
         });
         _startCreditsIfReady();
         final runtime = _narrationRuntime;
         if (!_startupLineRequested && runtime != null) {
           unawaited(_beginPreparedOpening(runtime, generation));
+        } else if (_experienceStage == _ExperienceStage.opening &&
+            !_hasStartedNarrationAudio) {
+          _showOpeningAudioError(
+            'Opening narration was interrupted. Return to narration selection and try again.',
+          );
         } else {
           _revealCamera();
           _startCaptureLoop(captureImmediately: true);
@@ -308,18 +335,25 @@ class _CameraCapturePageState extends State<CameraCapturePage>
           // granted, so credits cannot appear during the permission prompt.
           _experienceStage = _ExperienceStage.opening;
           _creditsController.reset();
+          _showWaitingTitles = false;
+          if (_filmOpening != null) _audioError = null;
         }
       });
       _startCreditsIfReady();
       final runtime = _narrationRuntime;
       if (!_startupLineRequested && runtime != null) {
         unawaited(_beginPreparedOpening(runtime, generation));
+      } else if (_experienceStage == _ExperienceStage.opening &&
+          !_hasStartedNarrationAudio) {
+        _showOpeningAudioError(
+          'Opening narration was interrupted. Return to narration selection and try again.',
+        );
       } else {
         _revealCamera();
         _startCaptureLoop(captureImmediately: true);
       }
     } on CameraException catch (exception, stackTrace) {
-      _openingAudioTimer?.cancel();
+      _cancelOpeningWait();
       _printError('Camera initialization failed', exception, stackTrace);
       if (mounted && generation == _cameraGeneration) {
         _creditsController.stop(canceled: true);
@@ -329,7 +363,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
         });
       }
     } catch (exception, stackTrace) {
-      _openingAudioTimer?.cancel();
+      _cancelOpeningWait();
       _printError('App initialization failed', exception, stackTrace);
       if (mounted && generation == _cameraGeneration) {
         _creditsController.stop(canceled: true);
@@ -499,7 +533,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
       _connectionError = null;
       _audioError = null;
     });
-    _openingAudioTimer?.cancel();
+    _cancelOpeningWait();
     try {
       final apiKey = kIsWeb
           ? const String.fromEnvironment('OPENROUTER_API_KEY')
@@ -556,7 +590,10 @@ class _CameraCapturePageState extends State<CameraCapturePage>
         _startupLineRequested =
             _episodeMemory.snapshot.recentNarrations.isNotEmpty;
         _filmOpening = null;
+        _openingPreparationFailure = null;
         _creditsController.reset();
+        _showWaitingTitles = false;
+        _titlesFadedAt = null;
         _experienceStage = _ExperienceStage.cameraConsent;
       });
       String? loggedVoice;
@@ -566,10 +603,20 @@ class _CameraCapturePageState extends State<CameraCapturePage>
           _printError('Narration engine failed', error);
           setState(() {
             _narrationUnavailable = true;
-            _audioError = 'Narration audio failed. Please try again.';
+            if (_experienceStage != _ExperienceStage.opening) {
+              _audioError = 'Narration audio failed. Please try again.';
+            }
           });
         }
         if (event is NarrationStarted) {
+          if (event.captures.isEmpty && _titlesFadedAt != null) {
+            final delay = DateTime.now()
+                .difference(_titlesFadedAt!)
+                .inMilliseconds;
+            debugPrint(
+              '[MCGEE] Opening playback started $delay ms after titles faded out.',
+            );
+          }
           if (kDebugMode) {
             final timestamp = event.playbackStartedAt.toUtc().toIso8601String();
             final kind = event.captures.isEmpty ? 'opening' : 'live';
@@ -610,7 +657,8 @@ class _CameraCapturePageState extends State<CameraCapturePage>
           setState(() {
             _isNarrationPlaying = isPlaying;
             if (event is NarrationStarted) {
-              _openingAudioTimer?.cancel();
+              _cancelOpeningWait();
+              _showWaitingTitles = false;
               _hasStartedNarrationAudio = true;
               _narrationUnavailable = false;
               _audioError = null;
@@ -670,14 +718,20 @@ class _CameraCapturePageState extends State<CameraCapturePage>
       if (revision != _actorSelectionGeneration) return null;
       _printError('Film opening preparation failed', error, stackTrace);
       if (mounted && identical(runtime, _narrationRuntime)) {
-        setState(() {
-          _narrationUnavailable = true;
-          _audioError = error.toString().contains('HTTP 402')
-              ? 'Fish Audio rejected s2.1-pro-free. Check free-tier access with Fish Audio (HTTP 402).'
-              : 'Opening audio could not start. Please try again.';
-        });
+        final message = error.toString().contains('HTTP 402')
+            ? 'Opening narration is unavailable because the speech service rejected this request. Return to narration selection and try again.'
+            : 'Opening narration could not be prepared. Return to narration selection and try again.';
+        _openingPreparationFailure = message;
+        if (_filmOpening == null ||
+            _experienceStage != _ExperienceStage.opening ||
+            _audioError != null) {
+          setState(() {
+            _narrationUnavailable = true;
+            _audioError = message;
+          });
+        }
       }
-      return null; // A failed opening must not prevent live narration.
+      return null;
     }
   }
 
@@ -706,23 +760,16 @@ class _CameraCapturePageState extends State<CameraCapturePage>
 
     if (!isOpening()) return;
     final prepared = await _openingPreparation;
-    if (!isOpening()) {
-      _openingAudioTimer?.cancel();
-      return;
-    }
+    if (!isOpening()) return;
     if (_filmOpening != null) {
       try {
         // Credits may already be running while the camera and speech prepare.
         // Finish both cards and return to black before starting the voiceover.
         await _creditsController.forward().orCancel;
       } on TickerCanceled {
-        _openingAudioTimer?.cancel();
         return;
       }
-      if (!isOpening()) {
-        _openingAudioTimer?.cancel();
-        return;
-      }
+      if (!isOpening()) return;
     }
     if (prepared != null) {
       _startupLineRequested = true;
@@ -744,13 +791,20 @@ class _CameraCapturePageState extends State<CameraCapturePage>
         openingPlayback.then((_) => false),
       ]);
       await openingSubscription.cancel();
-      _openingAudioTimer?.cancel();
-      if (audioStarted || openingStarted.isCompleted) {
-        await Future<void>.delayed(const Duration(seconds: 1));
-      }
+      if (!audioStarted && !openingStarted.isCompleted) return;
+      _cancelOpeningWait();
+      await Future<void>.delayed(const Duration(seconds: 1));
     } else {
-      _startupLineRequested = true;
-      _openingAudioTimer?.cancel();
+      if (_filmOpening == null) {
+        _cancelOpeningWait();
+        if (isOpening()) {
+          _showOpeningAudioError(
+            _openingPreparationFailure ??
+                'Opening narration could not be prepared. Return to narration selection and try again.',
+          );
+        }
+      }
+      return;
     }
     if (!ownsSession()) return;
     _revealCamera();
@@ -758,24 +812,86 @@ class _CameraCapturePageState extends State<CameraCapturePage>
   }
 
   void _startOpeningAudioDeadline(int generation) {
-    _openingAudioTimer?.cancel();
-    _openingAudioTimer = Timer(const Duration(seconds: 10), () {
-      if (!mounted ||
-          !_isAppActive ||
-          generation != _cameraGeneration ||
-          _hasStartedNarrationAudio) {
-        return;
-      }
-      _printError(
-        'Opening audio startup timed out',
-        TimeoutException('No playback started within 10 seconds.'),
+    _cancelOpeningWait();
+    debugPrint(
+      '[MCGEE] Opening titles faded out; extra titles at 5 seconds, audio error at 15 seconds if playback has not started.',
+    );
+    bool stillWaiting() =>
+        mounted &&
+        _isAppActive &&
+        generation == _cameraGeneration &&
+        _experienceStage == _ExperienceStage.opening &&
+        !_hasStartedNarrationAudio;
+    _openingWaitingTitlesTimer = Timer(const Duration(seconds: 5), () {
+      if (!stillWaiting()) return;
+      debugPrint(
+        '[MCGEE] Opening audio still pending after 5 seconds; showing extra titles.',
       );
-      setState(() {
-        _narrationUnavailable = true;
-        _audioError =
-            'Opening audio did not start within 10 seconds. Please try again.';
-      });
+      setState(() => _showWaitingTitles = true);
+      _waitingTitlesController.forward(from: 0);
     });
+    _openingAudioTimer = Timer(const Duration(seconds: 15), () {
+      if (!stillWaiting()) return;
+      debugPrint(
+        '[MCGEE] Opening playback still pending 15 seconds after the titles faded out; speech request remains active.',
+      );
+      _waitingTitlesController.stop(canceled: true);
+      _showOpeningAudioError(
+        _openingPreparationFailure ??
+            'Opening narration is taking longer than expected. We are still trying to play it. You can wait here or return to narration selection.',
+      );
+    });
+  }
+
+  void _cancelOpeningWait() {
+    _openingAudioTimer?.cancel();
+    _openingWaitingTitlesTimer?.cancel();
+    _waitingTitlesController.stop(canceled: true);
+  }
+
+  void _showOpeningAudioError(String message) {
+    if (!mounted || _experienceStage != _ExperienceStage.opening) return;
+    setState(() {
+      _narrationUnavailable = true;
+      _audioError = message;
+      _showWaitingTitles = false;
+    });
+  }
+
+  Future<void> _returnToNarrationSelection() async {
+    if (_isReturningToSelection || _experienceStage == _ExperienceStage.setup) {
+      return;
+    }
+    _isReturningToSelection = true;
+    ++_cameraGeneration;
+    ++_actorSelectionGeneration;
+    _cancelOpeningWait();
+    _captureTimer?.cancel();
+    _creditsController.stop(canceled: true);
+    final runtime = _narrationRuntime;
+    final controller = _controller;
+    setState(() {
+      _experienceStage = _ExperienceStage.setup;
+      _audioError = null;
+      _filmOpening = null;
+      _openingPreparationFailure = null;
+      _titlesFadedAt = null;
+      _startupLineRequested = false;
+      _hasStartedNarrationAudio = false;
+      _showWaitingTitles = false;
+      _controller = null;
+      _mockFrames = null;
+      _captureStore = null;
+    });
+    unawaited(controller?.dispose());
+    try {
+      await runtime?.stop();
+    } catch (error, stackTrace) {
+      _printError('Stopping opening narration failed', error, stackTrace);
+    } finally {
+      _isReturningToSelection = false;
+    }
+    debugPrint('[MCGEE] Returned to narration selection from opening.');
   }
 
   void _revealCamera() {
@@ -795,10 +911,11 @@ class _CameraCapturePageState extends State<CameraCapturePage>
           outcome.error ?? outcome.reason ?? 'Unknown narration error',
         );
         if (mounted && identical(runtime, _narrationRuntime)) {
-          setState(
-            () =>
-                _audioError = 'Opening audio failed to play. Please try again.',
-          );
+          _openingPreparationFailure =
+              'Opening narration could not play. Return to narration selection and try again.';
+          if (_audioError != null) {
+            _showOpeningAudioError(_openingPreparationFailure!);
+          }
         }
       }
       if (mounted && identical(runtime, _narrationRuntime)) {
@@ -811,10 +928,11 @@ class _CameraCapturePageState extends State<CameraCapturePage>
     } catch (error, stackTrace) {
       _printError('Opening narration failed', error, stackTrace);
       if (mounted && identical(runtime, _narrationRuntime)) {
-        setState(() {
-          _narrationUnavailable = true;
-          _audioError = 'Opening audio failed to play. Please try again.';
-        });
+        _openingPreparationFailure =
+            'Opening narration could not play. Return to narration selection and try again.';
+        if (_audioError != null) {
+          _showOpeningAudioError(_openingPreparationFailure!);
+        }
       }
     }
   }
@@ -830,7 +948,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
       _isInitializingCamera = false;
       _creditsController.stop(canceled: true);
       _captureTimer?.cancel();
-      _openingAudioTimer?.cancel();
+      _cancelOpeningWait();
       final controller = _controller;
       _controller = null;
       _mockFrames = null;
@@ -838,6 +956,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
         setState(() {
           _error = null;
           _isNarrationPlaying = false;
+          _showWaitingTitles = false;
         });
       }
       unawaited(controller?.dispose());
@@ -856,10 +975,11 @@ class _CameraCapturePageState extends State<CameraCapturePage>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _captureTimer?.cancel();
-    _openingAudioTimer?.cancel();
+    _cancelOpeningWait();
     _previewEntry.dispose();
     _entryController.dispose();
     _creditsController.dispose();
+    _waitingTitlesController.dispose();
     _nameController.dispose();
     unawaited(_narrationEventSubscription?.cancel());
     unawaited(_switchSoundPlayer?.dispose());
@@ -923,10 +1043,24 @@ class _CameraCapturePageState extends State<CameraCapturePage>
                   elevation: 8,
                   child: Padding(
                     padding: const EdgeInsets.all(16),
-                    child: Text(
-                      error,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(color: Colors.white),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          error,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(color: Colors.white),
+                        ),
+                        if (_experienceStage == _ExperienceStage.opening ||
+                            _experienceStage == _ExperienceStage.cameraConsent)
+                          TextButton(
+                            key: const ValueKey(
+                              'return-to-narration-selection',
+                            ),
+                            onPressed: _returnToNarrationSelection,
+                            child: const Text('Back to narration selection'),
+                          ),
+                      ],
                     ),
                   ),
                 ),
@@ -944,10 +1078,22 @@ class _CameraCapturePageState extends State<CameraCapturePage>
     }
     return DefaultTextStyle.merge(
       style: AppFonts.openingStyle,
-      child: FilmOpeningCredits(
-        opening: opening,
-        animation: _creditsController,
-      ),
+      child: _showWaitingTitles
+          ? OpeningWaitingTitles(
+              titles: switch (_selectedActor) {
+                'David Attenborough' => const [
+                  'We must preserve our planet’s treasured fauna.\nMade with the generous support of the Save Some Guy Foundation.',
+                  'Narrated by David Attenborough.',
+                ],
+                'Eve' => const [
+                  'The following is a recording of the news from that fateful day.',
+                  'Viewer discretion is advised.',
+                ],
+                _ => const ['This film is based on real events.'],
+              },
+              animation: _waitingTitlesController,
+            )
+          : FilmOpeningCredits(opening: opening, animation: _creditsController),
     );
   }
 

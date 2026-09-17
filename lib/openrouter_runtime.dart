@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:math';
 
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
 import 'package:mcgee/narration_engine.dart';
 import 'package:mcgee/fish_audio.dart';
 import 'package:mcgee/openrouter.dart';
@@ -154,6 +154,7 @@ final class OpenRouterNarrationRuntime {
   }) async {
     if (_closed) throw StateError('The narration runtime is closed.');
     final startupClock = Stopwatch()..start();
+    debugPrint('[MCGEE] Opening writing started.');
     final generation = _voiceGeneration;
     final opening =
         await generateFilmOpening(
@@ -162,28 +163,24 @@ final class OpenRouterNarrationRuntime {
           characterName: _characterName,
           profile: _narratorSelection.profile,
         ).timeout(
-          speechStartupTimeout,
+          const Duration(seconds: 30),
           onTimeout: () => throw TimeoutException(
-            'Opening writing did not finish within 10 seconds.',
-            speechStartupTimeout,
+            'Opening writing did not finish within 30 seconds.',
+            const Duration(seconds: 30),
           ),
         );
     _checkOpeningGeneration(generation);
+    debugPrint(
+      '[MCGEE] Opening writing finished in ${startupClock.elapsedMilliseconds} ms; requesting speech.',
+    );
     onCredits(opening);
-    final remaining = speechStartupTimeout - startupClock.elapsed;
-    if (remaining <= Duration.zero) {
-      throw TimeoutException(
-        'Opening speech had no time left in the 10-second startup budget.',
-        speechStartupTimeout,
-      );
-    }
     final synthesis = _speechSynthesizer.synthesize(opening.narration);
     late final AudioTrack track;
     try {
       track = await synthesis.timeout(
-        remaining,
+        speechStartupTimeout,
         onTimeout: () => throw TimeoutException(
-          'Opening speech did not produce audio within 10 seconds.',
+          'Opening speech did not produce audio within 60 seconds.',
           speechStartupTimeout,
         ),
       );
@@ -206,6 +203,9 @@ final class OpenRouterNarrationRuntime {
       rethrow;
     }
     _preparedTracks.add(track);
+    debugPrint(
+      '[MCGEE] Opening speech ready in ${startupClock.elapsedMilliseconds} ms total.',
+    );
     final prepared = PreparedFilmOpening(opening: opening, track: track);
     _preparedOpeningGenerations[prepared] = generation;
     return prepared;

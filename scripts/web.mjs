@@ -42,7 +42,9 @@ writeFileSync(defines, JSON.stringify(config), { mode: 0o600 });
 
 if (mode === "dev" || mode === "e2e") {
   const server = mode === "e2e"
-    ? (await import("./e2e-server.mjs")).startE2EServer()
+    ? (await import("./e2e-server.mjs")).startE2EServer({
+      fishDelayMs: Number(process.env.MOCK_FISH_DELAY_MS ?? 0),
+    })
     : (await import("./speech-dev.mjs")).startSpeechServer({
       apiKey: credential("FISH_AUDIO_API_KEY", ".secrets/fishaudio-key"),
     });

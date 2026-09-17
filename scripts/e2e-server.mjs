@@ -6,7 +6,7 @@ import { handleSpeech } from "../netlify/functions/speech.mjs";
 
 const mp3 = readFileSync(resolve("lib/assets/switch.mp3"));
 
-export function startE2EServer({ port = 8767 } = {}) {
+export function startE2EServer({ port = 8767, fishDelayMs = 0 } = {}) {
   const state = { openings: 0, liveRequests: 0, speechRequests: 0, frameSamples: new Set() };
   const server = createServer(async (req, res) => {
     const url = new URL(req.url, `http://127.0.0.1:${port}`);
@@ -32,7 +32,10 @@ export function startE2EServer({ port = 8767 } = {}) {
       });
       const response = await handleSpeech(request, {
         apiKey: "mock-fish-key",
-        fetcher: async () => new Response(mp3, { status: 200 }),
+        fetcher: async () => {
+          if (fishDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, fishDelayMs));
+          return new Response(mp3, { status: 200 });
+        },
       });
       res.writeHead(response.status, Object.fromEntries(response.headers));
       Readable.fromWeb(response.body).pipe(res);

@@ -31,7 +31,9 @@ export async function handleSpeech(request, { apiKey = process.env.FISH_AUDIO_AP
     return Response.json({ error: "Invalid speech request." }, { status: 400, headers });
   }
 
+  const startedAt = Date.now();
   try {
+    console.info(`[MCGEE] Fish request started (voice ${body.reference_id}, ${body.text.length} characters).`);
     const upstream = await fetcher("https://api.fish.audio/v1/tts", {
       method: "POST",
       headers: {
@@ -42,6 +44,7 @@ export async function handleSpeech(request, { apiKey = process.env.FISH_AUDIO_AP
       body: JSON.stringify(body),
       signal: request.signal,
     });
+    console.info(`[MCGEE] Fish response headers: HTTP ${upstream.status} after ${Date.now() - startedAt} ms.`);
     if (!upstream.ok || !upstream.body) {
       const rejected = upstream.status === 402;
       return Response.json({
@@ -54,7 +57,7 @@ export async function handleSpeech(request, { apiKey = process.env.FISH_AUDIO_AP
       headers: { ...headers, "Content-Type": "audio/mpeg" },
     });
   } catch (error) {
-    console.error("Speech request failed", error);
+    console.error(`[MCGEE] Fish request failed after ${Date.now() - startedAt} ms`, error);
     return Response.json({ error: "Speech provider is unavailable." }, { status: 502, headers });
   }
 }

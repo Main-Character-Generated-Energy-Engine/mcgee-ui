@@ -10,11 +10,19 @@ export function startSpeechServer({ port = 8767, apiKey } = {}) {
       return;
     }
     try {
+      const abort = new AbortController();
+      res.on("close", () => {
+        if (!res.writableFinished) {
+          abort.abort();
+          console.info("[MCGEE] Browser disconnected; canceled Fish request.");
+        }
+      });
       const request = new Request(url, {
         method: req.method,
         headers: req.headers,
         body: ["GET", "HEAD"].includes(req.method) ? undefined : Readable.toWeb(req),
         duplex: "half",
+        signal: abort.signal,
       });
       const response = await handleSpeech(request, { apiKey });
       res.writeHead(response.status, Object.fromEntries(response.headers));

@@ -44,6 +44,8 @@ the opening, live narration, speech request, and browser playback paths. Check
 `http://127.0.0.1:8767/__e2e/state` for request counts and `distinctFrames`;
 the latter should increase as live narration uses different camera images.
 This mode is enabled only by launcher supplied Dart defines.
+Set `MOCK_FISH_DELAY_MS=30000` when running `npm run dev:e2e` to exercise the
+five-second opening warning and late audio recovery.
 
 ## Audio and latency
 
@@ -61,9 +63,12 @@ speech request's first-audio time. Fish's free tier is subject to its
 [current terms](https://fish.audio/blog/s2-1-pro-free-api/), including no
 latency guarantee.
 
-Opening preparation and browser speech startup have a 10-second deadline.
-If opening playback has not started 10 seconds after camera activation, the
-app shows an audio error and logs the failed stage for debugging.
+Opening writing has a 30-second deadline and speech has a separate 60-second
+startup deadline. If playback has not started five seconds after the opening
+titles fade out, an extra title card appears. At fifteen seconds the app
+explains the delay and offers a return to narration selection. The camera
+stays hidden until opening playback begins. Debug logs show writing, first
+audio, title fade, playback delay, and any failed stage.
 
 ## Code map
 
