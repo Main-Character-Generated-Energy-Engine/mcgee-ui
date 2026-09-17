@@ -53,13 +53,17 @@ MP3 MediaSource support buffer the passage first. The app uses Fish's `low`
 latency setting. It does **not** fetch a complete MP3 before playback on the
 normal browser path.
 
-The writer must finish and validate a passage before Fish starts. Camera
+The web writer must finish a passage before Fish starts. Camera
 sampling (every two seconds), writing, Fish first audio, and a deliberate
 0.5–2 second gap between passages all affect perceived delay. WebSocket TTS
-alone would not remove the writing and validation wait. Debug builds log the
+alone would not remove the writing wait. Debug builds log the
 speech request's first-audio time. Fish's free tier is subject to its
 [current terms](https://fish.audio/blog/s2-1-pro-free-api/), including no
 latency guarantee.
+
+Opening preparation and browser speech startup have a 10-second deadline.
+If opening playback has not started 10 seconds after camera activation, the
+app shows an audio error and logs the failed stage for debugging.
 
 ## Code map
 
@@ -68,16 +72,20 @@ latency guarantee.
 | `lib/main.dart` | App UI, camera lifecycle, and mock camera switch. |
 | `lib/openrouter_runtime.dart` | Wires the narration engine and providers. |
 | `lib/src/` | Narration engine, OpenRouter, and native Fish adapters. |
-| `lib/direct_narration_renderer.dart` | Validates a complete web passage before speech. |
+| `lib/direct_narration_renderer.dart` | Sends each complete web passage to speech. |
 | `lib/direct_http_speech_synthesizer.dart` | Receives streamed HTTP speech in the browser. |
 | `netlify/functions/speech.mjs` | Authenticates to Fish and relays the audio stream. |
 | `web/narration_audio.js` | Plays MP3 chunks through MediaSource. |
 | `scripts/e2e-server.mjs` | Mock provider and inspection endpoint. |
 
 The three voices use separate instructions in
-`lib/assets/narrator-profiles.json`; the opening prompt is
+`lib/assets/narrator-profiles.json`; shared live writing rules are in
+`lib/src/core/writer_instructions.dart`, while `prompt_builder.dart` supplies
+only scene and story context. The opening prompt is
 `lib/assets/film-opening-prompt.json`. Name, language, and spoken story memory
-are stored locally.
+are stored locally. Opening generation starts during setup, while camera
+permission is pending. The camera view and capture loop start one second after
+opening audio begins.
 
 ## Deploy
 

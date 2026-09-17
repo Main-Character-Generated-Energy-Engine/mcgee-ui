@@ -71,7 +71,7 @@ inventing a physical event. Preserve the story through camera cuts. Resolve
 threads before introducing consequences that lead to the next development.
 If prior narration uses another genre or tense, preserve its established story
 facts but tell the next beat in the currently selected mode and tense.
-Vary sentence openings, including on passages where the name is due. Place
+Vary sentence openings when using the name. Place
 the name naturally within the sentence instead of always starting with it.
 Always produce a spoken line.
 ''';

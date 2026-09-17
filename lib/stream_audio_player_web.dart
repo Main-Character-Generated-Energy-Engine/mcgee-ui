@@ -36,31 +36,43 @@ final class _BrowserStreamAudioPlayer implements StreamAudioPlayer {
     final stream = track.stream;
     if (stream == null) throw ArgumentError('Expected streaming audio.');
     final progress = StreamController<AudioPlaybackProgress>.broadcast();
-    final player = _Player(((JSNumber position, JSNumber duration) {
-      if (progress.isClosed) return;
-      final seconds = duration.toDartDouble;
-      progress.add(AudioPlaybackProgress(
-        position: Duration(milliseconds: (position.toDartDouble * 1000).round()),
-        duration: seconds < 0 ? null : Duration(milliseconds: (seconds * 1000).round()),
-      ));
-    }).toJS);
+    final player = _Player(
+      ((JSNumber position, JSNumber duration) {
+        if (progress.isClosed) return;
+        final seconds = duration.toDartDouble;
+        progress.add(
+          AudioPlaybackProgress(
+            position: Duration(
+              milliseconds: (position.toDartDouble * 1000).round(),
+            ),
+            duration: seconds < 0
+                ? null
+                : Duration(milliseconds: (seconds * 1000).round()),
+          ),
+        );
+      }).toJS,
+    );
     _player = player;
     _track = track;
     final chunks = StreamIterator(stream);
     _chunks = chunks;
     final started = player.start().toDart;
-    final completed = player.completed.toDart.then<void>((_) {}).whenComplete(() async {
-      await chunks.cancel();
-      await track.dispose();
-      await progress.close();
-      if (identical(_player, player)) {
-        _player = null;
-        _track = null;
-        _chunks = null;
-      }
-    });
+    final completed = player.completed.toDart.then<void>((_) {}).whenComplete(
+      () async {
+        await chunks.cancel();
+        await track.dispose();
+        await progress.close();
+        if (identical(_player, player)) {
+          _player = null;
+          _track = null;
+          _chunks = null;
+        }
+      },
+    );
     // An error can arrive before the engine receives its playback handle.
-    unawaited(completed.then<void>((_) {}, onError: (Object _, StackTrace __) {}));
+    unawaited(
+      completed.then<void>((_) {}, onError: (Object _, StackTrace _) {}),
+    );
     unawaited(_feed(player, chunks));
     try {
       final milliseconds = await started;

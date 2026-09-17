@@ -24,8 +24,8 @@ void main() {
       expect(client.body['input'], contains('Create a new opening in French.'));
       expect(client.body['input'], contains('"Ari"'));
       expect(client.body['model'], 'openai/gpt-5.6-terra');
-      expect(client.body['reasoning'], {'effort': 'high'});
-      expect(client.body['max_output_tokens'], 2400);
+      expect(client.body['reasoning'], {'effort': 'medium'});
+      expect(client.body['max_output_tokens'], 1200);
       expect(client.body['store'], isFalse);
       expect(jsonEncode(client.body), isNot(contains('input_image')));
     },
@@ -61,12 +61,21 @@ void main() {
         <String, Object?>{},
         {'title': '', 'director': 'Someone', 'narration': 'A beginning.'},
         {'title': 'A film', 'director': 4, 'narration': 'A beginning.'},
-        {'title': 'A film', 'director': 'Someone', 'narration': 'x' * 901},
       ]) {
         expect(() => FilmOpening.fromJson(value), throwsFormatException);
       }
     },
   );
+
+  test('does not reject an opening for exceeding a prose length target', () {
+    final narration = 'A' * 901;
+    final opening = FilmOpening.fromJson({
+      'title': 'A film',
+      'director': 'Someone',
+      'narration': narration,
+    });
+    expect(opening.narration, narration);
+  });
 }
 
 final class _OpeningApi implements OpenAiApi {

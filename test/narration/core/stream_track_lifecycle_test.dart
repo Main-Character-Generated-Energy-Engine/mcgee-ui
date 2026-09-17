@@ -43,7 +43,7 @@ void main() {
     await engine.close();
   });
 
-  test('disposes a rendered stream rejected by editorial policy', () async {
+  test('plays a long rendered passage without an editorial retry', () async {
     final renderer = _Renderer();
     final audio = _Audio();
     final track = _TrackedStream();
@@ -55,10 +55,13 @@ void main() {
       text: List.filled(40, 'word').join(' '),
     ));
 
-    expect((await outcome).kind, NarrationOutcomeKind.silent);
-    expect(track.cancellations, 1);
-    expect(audio.playCalls, 0);
+    await audio.requested.future;
+    audio.start();
+    audio.finish();
+    expect((await outcome).kind, NarrationOutcomeKind.spoken);
     await engine.close();
+    expect(track.cancellations, 1);
+    expect(audio.playCalls, 1);
   });
 
   test('disposes a rendered stream that became stale during generation', () async {
@@ -204,7 +207,6 @@ NarrationEngine _engine(_Renderer renderer, _Audio audio, {Clock? clock}) {
     policy: const NarrationPolicy(
       minimumGap: Duration.zero,
       rollingWindow: Duration.zero,
-      sceneLookback: 0,
     ),
     clock: clock ?? () => DateTime.utc(2026),
   );

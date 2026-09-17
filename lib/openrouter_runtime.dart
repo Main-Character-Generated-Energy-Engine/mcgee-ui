@@ -107,23 +107,13 @@ final class OpenRouterNarrationRuntime {
                 speech: speechSynthesizer,
               )
             : null,
-        promptBuilder: ContinuousDocumentaryPromptBuilder(
-          maximumWords: 20,
-          language: language,
-          characterName: normalizedCharacterName,
-          narratorInstructions: () => selection.profile.liveInstructions,
-        ),
+        promptBuilder: const ContinuousDocumentaryPromptBuilder(),
         memory: memory,
         policy: const NarrationPolicy(
           minimumGap: Duration.zero,
           maximumObservationAge: liveMaximumObservationAge,
           rollingWindow: Duration.zero,
           maxNarrationsPerWindow: 1,
-          minimumSalience: 0,
-          sceneLookback: 0,
-          maximumWords: 20,
-          openingHandoffMaximumWords: 35,
-          rejectRepeatedNarration: false,
         ),
         maxCapturesPerObservation: 1,
         // Prepare from fresh frames during playback. Only the newest ready
@@ -163,18 +153,52 @@ final class OpenRouterNarrationRuntime {
     required void Function(FilmOpening) onCredits,
   }) async {
     if (_closed) throw StateError('The narration runtime is closed.');
+    final startupClock = Stopwatch()..start();
     final generation = _voiceGeneration;
-    final opening = await generateFilmOpening(
-      _client,
-      _language,
-      characterName: _characterName,
-      profile: _narratorSelection.profile,
-    );
+    final opening =
+        await generateFilmOpening(
+          _client,
+          _language,
+          characterName: _characterName,
+          profile: _narratorSelection.profile,
+        ).timeout(
+          speechStartupTimeout,
+          onTimeout: () => throw TimeoutException(
+            'Opening writing did not finish within 10 seconds.',
+            speechStartupTimeout,
+          ),
+        );
     _checkOpeningGeneration(generation);
     onCredits(opening);
-    final track = await _speechSynthesizer
-        .synthesize(opening.narration)
-        .timeout(const Duration(seconds: 20));
+    final remaining = speechStartupTimeout - startupClock.elapsed;
+    if (remaining <= Duration.zero) {
+      throw TimeoutException(
+        'Opening speech had no time left in the 10-second startup budget.',
+        speechStartupTimeout,
+      );
+    }
+    final synthesis = _speechSynthesizer.synthesize(opening.narration);
+    late final AudioTrack track;
+    try {
+      track = await synthesis.timeout(
+        remaining,
+        onTimeout: () => throw TimeoutException(
+          'Opening speech did not produce audio within 10 seconds.',
+          speechStartupTimeout,
+        ),
+      );
+    } on TimeoutException {
+      if (_directHttpSpeech case final direct?) {
+        unawaited(direct.cancelPending());
+      }
+      unawaited(
+        synthesis.then(
+          (lateTrack) => lateTrack.dispose(),
+          onError: (Object _, StackTrace _) {},
+        ),
+      );
+      rethrow;
+    }
     try {
       _checkOpeningGeneration(generation);
     } catch (_) {

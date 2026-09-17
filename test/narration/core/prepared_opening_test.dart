@@ -63,8 +63,6 @@ NarrationEngine _engine(_HeldAudio audio, _Speech speech, _Narrator narrator) {
     policy: const NarrationPolicy(
       minimumGap: Duration.zero,
       rollingWindow: Duration.zero,
-      minimumSalience: 0,
-      sceneLookback: 0,
     ),
     clock: () => DateTime.utc(2026),
   );

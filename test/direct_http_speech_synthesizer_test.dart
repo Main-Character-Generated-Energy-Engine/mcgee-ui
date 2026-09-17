@@ -8,6 +8,56 @@ import 'package:mcgee/direct_http_speech_synthesizer.dart';
 import 'package:mcgee/openrouter.dart';
 
 void main() {
+  test('speech startup times out instead of waiting silently', () async {
+    final speech = DirectHttpSpeechSynthesizer(
+      fishApiKey: '',
+      endpoint: Uri.parse('http://localhost:8767/api/speech'),
+      voice: OpenRouterVoiceOption.morganFreeman,
+      startupTimeout: const Duration(milliseconds: 20),
+      client: MockClient.streaming((request, body) async {
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        return http.StreamedResponse(Stream.value([1, 2, 3]), 200);
+      }),
+    );
+    expect(speechStartupTimeout, const Duration(seconds: 10));
+    await expectLater(
+      speech.synthesize('Ari opens the door.'),
+      throwsA(
+        isA<TimeoutException>().having(
+          (error) => error.message,
+          'message',
+          contains('response headers'),
+        ),
+      ),
+    );
+    speech.close();
+  });
+
+  test('an HTTP 200 with no audio bytes also times out', () async {
+    final audio = StreamController<List<int>>();
+    final speech = DirectHttpSpeechSynthesizer(
+      fishApiKey: '',
+      endpoint: Uri.parse('http://localhost:8767/api/speech'),
+      voice: OpenRouterVoiceOption.morganFreeman,
+      startupTimeout: const Duration(milliseconds: 20),
+      client: MockClient.streaming(
+        (request, body) async => http.StreamedResponse(audio.stream, 200),
+      ),
+    );
+    await expectLater(
+      speech.synthesize('Ari opens the door.'),
+      throwsA(
+        isA<TimeoutException>().having(
+          (error) => error.message,
+          'message',
+          contains('no audio bytes'),
+        ),
+      ),
+    );
+    speech.close();
+    await audio.close();
+  });
+
   test('Fish audio reaches playback before the provider finishes', () async {
     final audio = StreamController<List<int>>();
     final requested = Completer<void>();
@@ -60,21 +110,26 @@ void main() {
     speech.close();
   });
 
-  test('Fish failure surfaces without requesting another audio provider', () async {
-    final requests = <Uri>[];
-    final speech = DirectHttpSpeechSynthesizer(
-      fishApiKey: 'fish-test-key',
-      voice: OpenRouterVoiceOption.morganFreeman,
-      client: MockClient.streaming((request, _) async {
-        requests.add(request.url);
-        return http.StreamedResponse(Stream<List<int>>.empty(), 503);
-      }),
-    );
-    await expectLater(speech.synthesize('Ari opens the door.'),
-        throwsA(isA<http.ClientException>()));
-    expect(requests.map((uri) => uri.host), ['api.fish.audio']);
-    speech.close();
-  });
+  test(
+    'Fish failure surfaces without requesting another audio provider',
+    () async {
+      final requests = <Uri>[];
+      final speech = DirectHttpSpeechSynthesizer(
+        fishApiKey: 'fish-test-key',
+        voice: OpenRouterVoiceOption.morganFreeman,
+        client: MockClient.streaming((request, _) async {
+          requests.add(request.url);
+          return http.StreamedResponse(Stream<List<int>>.empty(), 503);
+        }),
+      );
+      await expectLater(
+        speech.synthesize('Ari opens the door.'),
+        throwsA(isA<http.ClientException>()),
+      );
+      expect(requests.map((uri) => uri.host), ['api.fish.audio']);
+      speech.close();
+    },
+  );
 
   test('browser proxy receives no Fish authorization header', () async {
     final speech = DirectHttpSpeechSynthesizer(

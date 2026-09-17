@@ -18,18 +18,18 @@ final class FilmOpening {
     if (value is! Map) {
       throw const FormatException('Opening must be a JSON object.');
     }
-    String field(String name, int limit) {
+    String field(String name) {
       final text = value[name];
-      if (text is! String || text.trim().isEmpty || text.length > limit) {
+      if (text is! String || text.trim().isEmpty) {
         throw FormatException('Invalid opening $name.');
       }
       return text.trim();
     }
 
     return FilmOpening(
-      title: field('title', 90),
-      director: field('director', 70),
-      narration: field('narration', 900),
+      title: field('title'),
+      director: field('director'),
+      narration: field('narration'),
     );
   }
 
@@ -60,9 +60,8 @@ Future<FilmOpening> generateFilmOpening(
   final response = await client
       .createResponse({
         'model': config['model'],
-        'reasoning': {'effort': 'high'},
-        // High reasoning effort consumes this same budget before the JSON.
-        'max_output_tokens': 2400,
+        'reasoning': {'effort': 'medium'},
+        'max_output_tokens': 1200,
         'store': false,
         'instructions': '${config['instructions']}\n'
             '${selectedProfile.openingInstructions}',

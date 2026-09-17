@@ -41,8 +41,8 @@ void main() {
 
       final narrationBody = api.responseBodies.single;
       expect(narrationBody['model'], 'openai/gpt-5.6-terra');
-      expect(narrationBody['max_output_tokens'], 2000);
-      expect(narrationBody['reasoning'], {'effort': 'high'});
+      expect(narrationBody['max_output_tokens'], 1200);
+      expect(narrationBody['reasoning'], {'effort': 'medium'});
       expect(
         narrationBody['instructions'],
         contains('10 to 20 words in one confident, complete sentence'),
@@ -147,7 +147,7 @@ void main() {
 
     final body = api.streamingResponseBodies.single;
     expect(body['model'], 'openai/gpt-5.6-terra');
-    expect(body['max_output_tokens'], 2000);
+    expect(body['max_output_tokens'], 1200);
     expect(body['text'], isNull);
     expect(
       body['instructions'],

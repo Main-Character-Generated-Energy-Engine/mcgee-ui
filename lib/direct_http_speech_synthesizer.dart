@@ -6,6 +6,8 @@ import 'package:http/http.dart' as http;
 import 'package:mcgee/narration_engine.dart';
 import 'package:mcgee/openrouter.dart';
 
+const speechStartupTimeout = Duration(seconds: 10);
+
 /// Browser-compatible, streaming Fish Audio HTTP TTS.
 final class DirectHttpSpeechSynthesizer implements SpeechSynthesizer {
   DirectHttpSpeechSynthesizer({
@@ -13,12 +15,14 @@ final class DirectHttpSpeechSynthesizer implements SpeechSynthesizer {
     required this.voice,
     Uri? endpoint,
     http.Client? client,
+    this.startupTimeout = speechStartupTimeout,
   }) : endpoint = endpoint ?? Uri.parse('https://api.fish.audio/v1/tts'),
        _client = client ?? http.Client();
 
   final String fishApiKey;
   final Uri endpoint;
   final http.Client _client;
+  final Duration startupTimeout;
   OpenRouterVoiceOption voice;
   final Set<_PendingAudio> _active = {};
   final Set<Completer<void>> _requests = {};
@@ -26,7 +30,9 @@ final class DirectHttpSpeechSynthesizer implements SpeechSynthesizer {
   @override
   Future<AudioTrack> synthesize(String text) async {
     final spoken = text.trim();
-    if (spoken.isEmpty) throw ArgumentError.value(text, 'text', 'Must not be empty.');
+    if (spoken.isEmpty) {
+      throw ArgumentError.value(text, 'text', 'Must not be empty.');
+    }
     return _send(
       endpoint: endpoint,
       key: fishApiKey,
@@ -50,19 +56,32 @@ final class DirectHttpSpeechSynthesizer implements SpeechSynthesizer {
     required String source,
   }) async {
     final started = Stopwatch()..start();
+    Duration remainingStartup() {
+      final left = startupTimeout - started.elapsed;
+      return left > Duration.zero ? left : Duration.zero;
+    }
+
     final abort = Completer<void>();
     _requests.add(abort);
-    final request = http.AbortableRequest('POST', endpoint,
-        abortTrigger: abort.future)
-      ..headers.addAll({
-        if (key.isNotEmpty) 'Authorization': 'Bearer $key',
-        'Content-Type': 'application/json',
-        ...headers,
-      })
-      ..body = jsonEncode(body);
+    final request =
+        http.AbortableRequest('POST', endpoint, abortTrigger: abort.future)
+          ..headers.addAll({
+            if (key.isNotEmpty) 'Authorization': 'Bearer $key',
+            'Content-Type': 'application/json',
+            ...headers,
+          })
+          ..body = jsonEncode(body);
     final http.StreamedResponse response;
     try {
-      response = await _client.send(request).timeout(const Duration(seconds: 20));
+      response = await _client
+          .send(request)
+          .timeout(
+            startupTimeout,
+            onTimeout: () => throw TimeoutException(
+              'Fish speech response headers missed the startup deadline.',
+              startupTimeout,
+            ),
+          );
     } catch (_) {
       if (!abort.isCompleted) abort.complete();
       _requests.remove(abort);
@@ -72,14 +91,19 @@ final class DirectHttpSpeechSynthesizer implements SpeechSynthesizer {
       await response.stream.listen(null).cancel();
       if (!abort.isCompleted) abort.complete();
       _requests.remove(abort);
-      throw http.ClientException('$source speech failed with HTTP ${response.statusCode}.');
+      throw http.ClientException(
+        '$source speech failed with HTTP ${response.statusCode}.',
+      );
     }
     late final _PendingAudio pending;
     pending = _PendingAudio(
       response.stream,
+      timeout: startupTimeout,
       onFirstChunk: () {
         if (kDebugMode) {
-          debugPrint('[MCGEE] $source first audio: ${started.elapsedMilliseconds} ms');
+          debugPrint(
+            '[MCGEE] $source first audio: ${started.elapsedMilliseconds} ms',
+          );
         }
       },
       onClose: () {
@@ -90,7 +114,13 @@ final class DirectHttpSpeechSynthesizer implements SpeechSynthesizer {
     );
     if (!pending.isClosed) _active.add(pending);
     try {
-      await pending.firstChunk.future.timeout(const Duration(seconds: 20));
+      await pending.firstChunk.future.timeout(
+        remainingStartup(),
+        onTimeout: () => throw TimeoutException(
+          'Fish speech returned no audio bytes before the startup deadline.',
+          startupTimeout,
+        ),
+      );
     } catch (_) {
       await pending.cancel();
       rethrow;
@@ -125,40 +155,49 @@ final class DirectHttpSpeechSynthesizer implements SpeechSynthesizer {
 final class _PendingAudio {
   _PendingAudio(
     Stream<List<int>> source, {
+    required this.timeout,
     required this.onClose,
     required this.onFirstChunk,
   }) {
     _controller.onCancel = cancel;
-    _subscription = source.timeout(const Duration(seconds: 15)).listen(
-      (bytes) {
-        if (_closed || bytes.isEmpty) return;
-        if (_byteCount == 0) {
-          onFirstChunk();
-          firstChunk.complete();
-        }
-        _byteCount += bytes.length;
-        if (_byteCount > 8 * 1024 * 1024) {
-          _fail(StateError('Speech audio exceeded the size limit.'));
-          return;
-        }
-        _controller.add(bytes);
-      },
-      onError: (Object error, StackTrace stack) => _fail(error, stack),
-      onDone: () {
-        if (_closed) return;
-        if (_byteCount == 0) {
-          _fail(StateError('Speech returned empty audio.'));
-        } else {
-          _closed = true;
-          unawaited(_controller.close());
-          onClose();
-        }
-      },
-    );
+    _subscription = source
+        .timeout(
+          timeout,
+          onTimeout: (sink) => sink.addError(
+            TimeoutException('Fish speech audio stream stalled.', timeout),
+          ),
+        )
+        .listen(
+          (bytes) {
+            if (_closed || bytes.isEmpty) return;
+            if (_byteCount == 0) {
+              onFirstChunk();
+              firstChunk.complete();
+            }
+            _byteCount += bytes.length;
+            if (_byteCount > 8 * 1024 * 1024) {
+              _fail(StateError('Speech audio exceeded the size limit.'));
+              return;
+            }
+            _controller.add(bytes);
+          },
+          onError: (Object error, StackTrace stack) => _fail(error, stack),
+          onDone: () {
+            if (_closed) return;
+            if (_byteCount == 0) {
+              _fail(StateError('Speech returned empty audio.'));
+            } else {
+              _closed = true;
+              unawaited(_controller.close());
+              onClose();
+            }
+          },
+        );
   }
 
   final void Function() onClose;
   final void Function() onFirstChunk;
+  final Duration timeout;
   final firstChunk = Completer<void>();
   final _controller = StreamController<List<int>>();
   StreamSubscription<List<int>>? _subscription;

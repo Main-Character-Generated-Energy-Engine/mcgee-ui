@@ -236,54 +236,46 @@ void main() {
       },
     );
 
-    test(
-      'suppresses an unchanged scene before asking the narrator again',
-      () async {
-        final narrator = _Narrator(
-          (_) async => NarrationDraft.speak('A rare expedition to the kettle.'),
-        );
-        final engine = _engine(narrator: narrator);
+    test('lets the writer develop an unchanged scene', () async {
+      final narrator = _Narrator(
+        (_) async => NarrationDraft.speak('A rare expedition to the kettle.'),
+      );
+      final engine = _engine(narrator: narrator);
 
-        final first = await engine.submit(<CapturedImage>[_capture(0)]);
-        final second = await engine.submit(<CapturedImage>[_capture(60)]);
+      final first = await engine.submit(<CapturedImage>[_capture(0)]);
+      final second = await engine.submit(<CapturedImage>[_capture(60)]);
 
-        expect(first.kind, NarrationOutcomeKind.spoken);
-        expect(second.kind, NarrationOutcomeKind.silent);
-        expect(second.reason, SilenceReason.unchangedScene.message);
-        expect(narrator.requests, hasLength(1));
-        await engine.close();
-      },
-    );
+      expect(first.kind, NarrationOutcomeKind.spoken);
+      expect(second.kind, NarrationOutcomeKind.spoken);
+      expect(narrator.requests, hasLength(2));
+      await engine.close();
+    });
 
-    test(
-      'suppresses repeated copy even when the observed scene changes',
-      () async {
-        var interpretation = 0;
-        final interpreter = _Interpreter(
-          (_) async => SceneObservation(
-            description: 'Moment $interpretation',
-            fingerprint: 'scene-${interpretation++}',
-          ),
-        );
-        final narrator = _Narrator(
-          (_) async => NarrationDraft.speak('The creature seeks its reward.'),
-        );
-        final synthesizer = _Synthesizer();
-        final engine = _engine(
-          interpreter: interpreter,
-          narrator: narrator,
-          synthesizer: synthesizer,
-        );
+    test('does not reject a repeated line after generation', () async {
+      var interpretation = 0;
+      final interpreter = _Interpreter(
+        (_) async => SceneObservation(
+          description: 'Moment $interpretation',
+          fingerprint: 'scene-${interpretation++}',
+        ),
+      );
+      final narrator = _Narrator(
+        (_) async => NarrationDraft.speak('The creature seeks its reward.'),
+      );
+      final synthesizer = _Synthesizer();
+      final engine = _engine(
+        interpreter: interpreter,
+        narrator: narrator,
+        synthesizer: synthesizer,
+      );
 
-        await engine.submit(<CapturedImage>[_capture(0)]);
-        final second = await engine.submit(<CapturedImage>[_capture(60)]);
+      await engine.submit(<CapturedImage>[_capture(0)]);
+      final second = await engine.submit(<CapturedImage>[_capture(60)]);
 
-        expect(second.kind, NarrationOutcomeKind.silent);
-        expect(second.reason, SilenceReason.repeatedNarration.message);
-        expect(synthesizer.texts, hasLength(1));
-        await engine.close();
-      },
-    );
+      expect(second.kind, NarrationOutcomeKind.spoken);
+      expect(synthesizer.texts, hasLength(2));
+      await engine.close();
+    });
 
     test('drops a concurrent submission instead of queueing it', () async {
       final interpretation = Completer<SceneObservation>();
@@ -330,11 +322,7 @@ void main() {
           narrator: narrator,
           speechSynthesizer: _Synthesizer(),
           audioOutput: _Audio(DateTime.utc(2026, 1, 1, 9, 0, 5)),
-          policy: const NarrationPolicy(
-            minimumGap: Duration.zero,
-            sceneLookback: 0,
-            rejectRepeatedNarration: false,
-          ),
+          policy: const NarrationPolicy(minimumGap: Duration.zero),
           clock: () => DateTime.utc(2026, 1, 1, 9, 0, 5),
           prefetchDuringPlayback: true,
           coalesceWhileBusy: true,
@@ -384,11 +372,7 @@ void main() {
           narrationRenderer: renderer,
           audioOutput: audio,
           promptBuilder: const ContinuousDocumentaryPromptBuilder(),
-          policy: const NarrationPolicy(
-            minimumGap: Duration.zero,
-            sceneLookback: 0,
-            rejectRepeatedNarration: false,
-          ),
+          policy: const NarrationPolicy(minimumGap: Duration.zero),
           clock: () => DateTime.utc(2026, 1, 1, 9, 0, 5),
           prefetchDuringPlayback: true,
           coalesceWhileBusy: true,
@@ -410,19 +394,15 @@ void main() {
           renderer.requests.single.prompt,
           contains('Last spoken line — continue this beat:\n$opening'),
         );
-        expect(
-          renderer.requests.single.prompt,
-          contains('inherit its exact small goal'),
-        );
         audio.finish(0);
         await intro;
         await _waitUntil(() => audio.playCount == 2);
         audio.finish(1);
         await live;
-        expect(
-          engine.memory.recentNarrations.map((entry) => entry.text),
-          [opening, 'Beat 0 continues the story.'],
-        );
+        expect(engine.memory.recentNarrations.map((entry) => entry.text), [
+          opening,
+          'Beat 0 continues the story.',
+        ]);
         await engine.close();
       },
     );
@@ -445,11 +425,7 @@ void main() {
           speechSynthesizer: _Synthesizer(),
           narrationRenderer: renderer,
           audioOutput: audio,
-          policy: const NarrationPolicy(
-            minimumGap: Duration.zero,
-            sceneLookback: 0,
-            rejectRepeatedNarration: false,
-          ),
+          policy: const NarrationPolicy(minimumGap: Duration.zero),
           clock: () => DateTime.utc(2026, 1, 1, 9, 0, 5),
           prefetchDuringPlayback: true,
           coalesceWhileBusy: true,
@@ -508,8 +484,6 @@ void main() {
         policy: const NarrationPolicy(
           minimumGap: Duration.zero,
           maximumObservationAge: Duration(seconds: 5),
-          sceneLookback: 0,
-          rejectRepeatedNarration: false,
         ),
         clock: () => now,
         prefetchDuringPlayback: true,
@@ -623,18 +597,6 @@ void main() {
     });
   });
 
-  test('policy rejects narration beyond its hard word limit', () {
-    const policy = NarrationPolicy(maximumWords: 4);
-
-    expect(
-      policy.checkDraft(
-        'The creature considers one final administrative migration.',
-        const NarrativeMemorySnapshot(),
-      ),
-      SilenceReason.narrationTooLong,
-    );
-  });
-
   group('NarrationPolicy', () {
     test('enforces both minimum spacing and a rolling line limit', () {
       final memory = NarrativeMemory();
@@ -690,36 +652,30 @@ void main() {
     });
   });
 
-  test(
-    'default prompt carries visual grounding, continuity, and recent context',
-    () {
-      final builder = DocumentaryPromptBuilder(maximumWords: 24);
-      final prompt = builder.build(
-        observation: const SceneObservation(
-          description: 'The protagonist reaches for a mug.',
-          fingerprint: 'mug',
-        ),
-        memory: NarrativeMemorySnapshot(
-          recentNarrations: <NarrationMemoryEntry>[
-            NarrationMemoryEntry(
-              text: 'Yesterday, the kettle won.',
-              observedAt: DateTime.utc(2026),
-              motifs: const <String>['rivalry'],
-            ),
-          ],
-          canon: const <String, String>{'kettle': 'an old rival'},
-        ),
-      );
+  test('default prompt carries scene and story context', () {
+    const builder = DocumentaryPromptBuilder();
+    final prompt = builder.build(
+      observation: const SceneObservation(
+        description: 'The protagonist reaches for a mug.',
+        fingerprint: 'mug',
+      ),
+      memory: NarrativeMemorySnapshot(
+        recentNarrations: <NarrationMemoryEntry>[
+          NarrationMemoryEntry(
+            text: 'Yesterday, the kettle won.',
+            observedAt: DateTime.utc(2026),
+            motifs: const <String>['rivalry'],
+          ),
+        ],
+        canon: const <String, String>{'kettle': 'an old rival'},
+      ),
+    );
 
-      expect(prompt, contains('at most 24 words'));
-      expect(prompt, contains('Ground every line in the current capture'));
-      expect(prompt, contains('continue directly from the last spoken line'));
-      expect(prompt.toLowerCase(), isNot(contains('silence')));
-      expect(prompt, contains('kettle: an old rival'));
-      expect(prompt, contains('Yesterday, the kettle won.'));
-      expect(prompt, contains('rivalry'));
-    },
-  );
+    expect(prompt, contains('Current observation:'));
+    expect(prompt, contains('Last spoken line — continue this beat'));
+    expect(prompt, contains('kettle: an old rival'));
+    expect(prompt, contains('Yesterday, the kettle won.'));
+  });
 
   test('capture and track reject ambiguous or empty payloads at runtime', () {
     expect(

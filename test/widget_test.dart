@@ -19,6 +19,46 @@ void main() {
     expect(find.text('MCGEE'), findsOneWidget);
   });
 
+  testWidgets('opening speech failure is visible on the consent screen', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MainApp(
+        home: CameraCapturePage(
+          ioApiKeyOverride: 'sk-or-test',
+          userProfileStore: _MemoryUserProfileStore('Ari'),
+          narrativeMemoryStore: _MemoryNarrativeMemoryStore(),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.runAsync(() async {
+      tester
+          .widget<FilledButton>(
+            find.byKey(const ValueKey('continue-setup-button')),
+          )
+          .onPressed!();
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+    });
+    for (
+      var attempt = 0;
+      attempt < 20 &&
+          find
+              .byKey(const ValueKey('narration-audio-error'))
+              .evaluate()
+              .isEmpty;
+      attempt++
+    ) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    expect(find.byKey(const ValueKey('narration-audio-error')), findsOneWidget);
+    expect(
+      find.text('Opening audio could not start. Please try again.'),
+      findsOneWidget,
+    );
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets('starts with narrator setup and advances without an API key', (
     tester,
   ) async {
@@ -118,11 +158,16 @@ void main() {
 
     final field = find.byKey(const ValueKey('user-name-field'));
     expect(field, findsOneWidget);
-    tester.widget<FilledButton>(
-      find.byKey(const ValueKey('continue-setup-button')),
-    ).onPressed!();
+    tester
+        .widget<FilledButton>(
+          find.byKey(const ValueKey('continue-setup-button')),
+        )
+        .onPressed!();
     await tester.pump();
-    expect(find.text('Enter the name the narrator should use.'), findsOneWidget);
+    expect(
+      find.text('Enter the name the narrator should use.'),
+      findsOneWidget,
+    );
 
     await tester.enterText(field, '  Sam  ');
     await tester.runAsync(() async {
@@ -183,9 +228,7 @@ void main() {
         home: CameraCapturePage(
           ioApiKeyOverride: 'sk-or-test',
           userProfileStore: profile,
-          narrativeMemoryStore: _MemoryNarrativeMemoryStore(
-            throwOnClear: true,
-          ),
+          narrativeMemoryStore: _MemoryNarrativeMemoryStore(throwOnClear: true),
         ),
       ),
     );

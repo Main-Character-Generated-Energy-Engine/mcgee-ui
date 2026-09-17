@@ -5,12 +5,8 @@ enum SilenceReason {
   tooSoon,
   rollingLimit,
   staleObservation,
-  lowSalience,
-  unchangedScene,
   narratorChoseSilence,
   emptyNarration,
-  narrationTooLong,
-  repeatedNarration,
 }
 
 extension SilenceReasonMessage on SilenceReason {
@@ -21,50 +17,25 @@ extension SilenceReasonMessage on SilenceReason {
       'The rolling narration limit has been reached.',
     SilenceReason.staleObservation =>
       'The observed moment is no longer timely enough to narrate.',
-    SilenceReason.lowSalience => 'The moment is not significant enough.',
-    SilenceReason.unchangedScene => 'The scene has not meaningfully changed.',
     SilenceReason.narratorChoseSilence =>
       'The narrator decided silence was better.',
     SilenceReason.emptyNarration => 'The narrator returned no usable text.',
-    SilenceReason.narrationTooLong =>
-      'The proposed narration exceeded the word limit.',
-    SilenceReason.repeatedNarration =>
-      'The proposed narration was too repetitive.',
   };
 }
 
-/// Deterministic editorial gates around the model's own decision to speak.
+/// Scheduling and freshness limits; prose quality belongs to the writer prompt.
 final class NarrationPolicy {
   const NarrationPolicy({
     this.minimumGap = const Duration(seconds: 20),
     this.maximumObservationAge = const Duration(seconds: 30),
     this.rollingWindow = const Duration(minutes: 3),
     this.maxNarrationsPerWindow = 4,
-    this.minimumSalience = 0.25,
-    this.sceneLookback = 2,
-    this.maximumWords = 30,
-    this.openingHandoffMaximumWords,
-    this.duplicateThreshold = 0.72,
-    this.rejectRepeatedNarration = true,
-  }) : assert(maxNarrationsPerWindow > 0),
-       assert(minimumSalience >= 0 && minimumSalience <= 1),
-       assert(sceneLookback >= 0),
-       assert(maximumWords > 0),
-       assert(openingHandoffMaximumWords == null || openingHandoffMaximumWords > 0),
-       assert(duplicateThreshold >= 0 && duplicateThreshold <= 1);
+  }) : assert(maxNarrationsPerWindow > 0);
 
   final Duration minimumGap;
-
-  /// Set to null for retrospective rendering of historical captures.
   final Duration? maximumObservationAge;
   final Duration rollingWindow;
   final int maxNarrationsPerWindow;
-  final double minimumSalience;
-  final int sceneLookback;
-  final int maximumWords;
-  final int? openingHandoffMaximumWords;
-  final double duplicateThreshold;
-  final bool rejectRepeatedNarration;
 
   SilenceReason? checkTiming(
     DateTime observedAt,
@@ -101,74 +72,5 @@ final class NarrationPolicy {
       return SilenceReason.staleObservation;
     }
     return null;
-  }
-
-  SilenceReason? checkObservation(
-    SceneObservation observation,
-    NarrativeMemorySnapshot memory,
-  ) {
-    if (observation.salience < minimumSalience) {
-      return SilenceReason.lowSalience;
-    }
-    if (sceneLookback == 0 || observation.fingerprint.trim().isEmpty) {
-      return null;
-    }
-    final observations = memory.recentObservations;
-    final start = observations.length > sceneLookback
-        ? observations.length - sceneLookback
-        : 0;
-    for (var index = start; index < observations.length; index += 1) {
-      if (observations[index].fingerprint == observation.fingerprint) {
-        return SilenceReason.unchangedScene;
-      }
-    }
-    return null;
-  }
-
-  SilenceReason? checkDraft(String text, NarrativeMemorySnapshot memory) {
-    if (text.trim().isEmpty) {
-      return SilenceReason.emptyNarration;
-    }
-    final wordLimit = memory.hasOnlyOpening
-        ? openingHandoffMaximumWords ?? maximumWords
-        : maximumWords;
-    if (_wordCount(text) > wordLimit) {
-      return SilenceReason.narrationTooLong;
-    }
-    if (rejectRepeatedNarration) {
-      final candidate = _tokens(text);
-      for (final entry in memory.recentNarrations) {
-        if (_jaccard(candidate, _tokens(entry.text)) >= duplicateThreshold) {
-          return SilenceReason.repeatedNarration;
-        }
-      }
-    }
-    return null;
-  }
-
-  static Set<String> _tokens(String text) {
-    return text
-        .toLowerCase()
-        .replaceAll(RegExp(r'[^a-z0-9\s]'), ' ')
-        .split(RegExp(r'\s+'))
-        .where((token) => token.isNotEmpty)
-        .toSet();
-  }
-
-  static int _wordCount(String text) {
-    return text
-        .trim()
-        .split(RegExp(r'\s+'))
-        .where((word) => word.isNotEmpty)
-        .length;
-  }
-
-  static double _jaccard(Set<String> left, Set<String> right) {
-    if (left.isEmpty && right.isEmpty) {
-      return 1;
-    }
-    final intersection = left.intersection(right).length;
-    final union = left.union(right).length;
-    return intersection / union;
   }
 }

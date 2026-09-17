@@ -81,7 +81,6 @@ class _CameraCapturePageState extends State<CameraCapturePage>
       _mockFrames != null || (_controller?.value.isInitialized ?? false);
   late final AnimationController _entryController;
   late final AnimationController _creditsController;
-  late final AnimationController _binocularsController;
   late final CurvedAnimation _previewEntry;
   Timer? _captureTimer;
   StreamSubscription<NarrationEngineEvent>? _narrationEventSubscription;
@@ -89,6 +88,8 @@ class _CameraCapturePageState extends State<CameraCapturePage>
   FlutterAudioOutput? _audioOutput;
   OpenRouterNarrationRuntime? _narrationRuntime;
   String? _error;
+  String? _audioError;
+  Timer? _openingAudioTimer;
   String? _visibleNarrationPhrase;
   bool _isCapturing = false;
   bool _isInitializingCamera = false;
@@ -151,10 +152,6 @@ class _CameraCapturePageState extends State<CameraCapturePage>
       vsync: this,
       duration: FilmOpeningCredits.duration,
     );
-    _binocularsController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1400),
-    )..repeat();
     _previewEntry = CurvedAnimation(
       parent: _entryController,
       curve: Curves.easeInOut,
@@ -209,8 +206,8 @@ class _CameraCapturePageState extends State<CameraCapturePage>
       if (name != _userName) {
         await _narrationRuntime?.stop();
         await _narrativeMemoryStore.clear();
-        await _userProfileStore.saveName(name);
         _episodeMemory = NarrativeMemory();
+        await _userProfileStore.saveName(name);
       }
       if (!mounted) return;
       setState(() {
@@ -238,6 +235,9 @@ class _CameraCapturePageState extends State<CameraCapturePage>
       return;
     }
     final generation = ++_cameraGeneration;
+    if (!_startupLineRequested && _narrationRuntime != null) {
+      _startOpeningAudioDeadline(generation);
+    }
     setState(() {
       _isInitializingCamera = true;
       _error = null;
@@ -319,6 +319,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
         _startCaptureLoop(captureImmediately: true);
       }
     } on CameraException catch (exception, stackTrace) {
+      _openingAudioTimer?.cancel();
       _printError('Camera initialization failed', exception, stackTrace);
       if (mounted && generation == _cameraGeneration) {
         _creditsController.stop(canceled: true);
@@ -328,6 +329,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
         });
       }
     } catch (exception, stackTrace) {
+      _openingAudioTimer?.cancel();
       _printError('App initialization failed', exception, stackTrace);
       if (mounted && generation == _cameraGeneration) {
         _creditsController.stop(canceled: true);
@@ -495,7 +497,9 @@ class _CameraCapturePageState extends State<CameraCapturePage>
     setState(() {
       _isConnecting = true;
       _connectionError = null;
+      _audioError = null;
     });
+    _openingAudioTimer?.cancel();
     try {
       final apiKey = kIsWeb
           ? const String.fromEnvironment('OPENROUTER_API_KEY')
@@ -560,15 +564,10 @@ class _CameraCapturePageState extends State<CameraCapturePage>
         if (!mounted || !identical(runtime, _narrationRuntime)) return;
         if (event case NarrationFailed(:final error)) {
           _printError('Narration engine failed', error);
-          if (!_narrationUnavailable) {
-            setState(() => _narrationUnavailable = true);
-          }
-        }
-        if (event is NarrationStarted &&
-            _isAppActive &&
-            _experienceStage == _ExperienceStage.opening) {
-          // The adapter emits this only after audio playback starts.
-          _revealCamera();
+          setState(() {
+            _narrationUnavailable = true;
+            _audioError = 'Narration audio failed. Please try again.';
+          });
         }
         if (event is NarrationStarted) {
           if (kDebugMode) {
@@ -602,7 +601,8 @@ class _CameraCapturePageState extends State<CameraCapturePage>
           _ => null,
         };
         final soundRecovered =
-            event is NarrationStarted && _narrationUnavailable;
+            event is NarrationStarted &&
+            (_narrationUnavailable || _audioError != null);
         if (_isNarrationPlaying != isPlaying ||
             soundRecovered ||
             (visiblePhrase != null &&
@@ -610,8 +610,10 @@ class _CameraCapturePageState extends State<CameraCapturePage>
           setState(() {
             _isNarrationPlaying = isPlaying;
             if (event is NarrationStarted) {
+              _openingAudioTimer?.cancel();
               _hasStartedNarrationAudio = true;
               _narrationUnavailable = false;
+              _audioError = null;
             }
             if (visiblePhrase != null) {
               _visibleNarrationPhrase = visiblePhrase;
@@ -667,13 +669,13 @@ class _CameraCapturePageState extends State<CameraCapturePage>
     } catch (error, stackTrace) {
       if (revision != _actorSelectionGeneration) return null;
       _printError('Film opening preparation failed', error, stackTrace);
-      if (mounted &&
-          identical(runtime, _narrationRuntime) &&
-          error.toString().contains('HTTP 402')) {
-        setState(
-          () => _error =
-              'Fish Audio rejected s2.1-pro-free. Check free-tier access with Fish Audio (HTTP 402).',
-        );
+      if (mounted && identical(runtime, _narrationRuntime)) {
+        setState(() {
+          _narrationUnavailable = true;
+          _audioError = error.toString().contains('HTTP 402')
+              ? 'Fish Audio rejected s2.1-pro-free. Check free-tier access with Fish Audio (HTTP 402).'
+              : 'Opening audio could not start. Please try again.';
+        });
       }
       return null; // A failed opening must not prevent live narration.
     }
@@ -702,17 +704,25 @@ class _CameraCapturePageState extends State<CameraCapturePage>
     bool isOpening() =>
         ownsSession() && _experienceStage == _ExperienceStage.opening;
 
-    final prepared = await _openingPreparation;
     if (!isOpening()) return;
+    final prepared = await _openingPreparation;
+    if (!isOpening()) {
+      _openingAudioTimer?.cancel();
+      return;
+    }
     if (_filmOpening != null) {
       try {
         // Credits may already be running while the camera and speech prepare.
         // Finish both cards and return to black before starting the voiceover.
         await _creditsController.forward().orCancel;
       } on TickerCanceled {
+        _openingAudioTimer?.cancel();
         return;
       }
-      if (!isOpening()) return;
+      if (!isOpening()) {
+        _openingAudioTimer?.cancel();
+        return;
+      }
     }
     if (prepared != null) {
       _startupLineRequested = true;
@@ -729,17 +739,43 @@ class _CameraCapturePageState extends State<CameraCapturePage>
         }
       });
       final openingPlayback = _speakOpening(runtime, prepared);
-      await Future.any<Object?>(<Future<Object?>>[
-        openingStarted.future.then<Object?>((_) => null),
-        openingPlayback.then<Object?>((_) => null),
+      final audioStarted = await Future.any<bool>(<Future<bool>>[
+        openingStarted.future.then((_) => true),
+        openingPlayback.then((_) => false),
       ]);
       await openingSubscription.cancel();
+      _openingAudioTimer?.cancel();
+      if (audioStarted || openingStarted.isCompleted) {
+        await Future<void>.delayed(const Duration(seconds: 1));
+      }
     } else {
       _startupLineRequested = true;
-      _revealCamera();
+      _openingAudioTimer?.cancel();
     }
     if (!ownsSession()) return;
+    _revealCamera();
     _startCaptureLoop(captureImmediately: true);
+  }
+
+  void _startOpeningAudioDeadline(int generation) {
+    _openingAudioTimer?.cancel();
+    _openingAudioTimer = Timer(const Duration(seconds: 10), () {
+      if (!mounted ||
+          !_isAppActive ||
+          generation != _cameraGeneration ||
+          _hasStartedNarrationAudio) {
+        return;
+      }
+      _printError(
+        'Opening audio startup timed out',
+        TimeoutException('No playback started within 10 seconds.'),
+      );
+      setState(() {
+        _narrationUnavailable = true;
+        _audioError =
+            'Opening audio did not start within 10 seconds. Please try again.';
+      });
+    });
   }
 
   void _revealCamera() {
@@ -758,11 +794,14 @@ class _CameraCapturePageState extends State<CameraCapturePage>
           'Opening narration failed',
           outcome.error ?? outcome.reason ?? 'Unknown narration error',
         );
+        if (mounted && identical(runtime, _narrationRuntime)) {
+          setState(
+            () =>
+                _audioError = 'Opening audio failed to play. Please try again.',
+          );
+        }
       }
       if (mounted && identical(runtime, _narrationRuntime)) {
-        if (_isAppActive && _experienceStage == _ExperienceStage.opening) {
-          _revealCamera();
-        }
         setState(
           () => _narrationUnavailable =
               outcome.kind == NarrationOutcomeKind.failed &&
@@ -772,10 +811,10 @@ class _CameraCapturePageState extends State<CameraCapturePage>
     } catch (error, stackTrace) {
       _printError('Opening narration failed', error, stackTrace);
       if (mounted && identical(runtime, _narrationRuntime)) {
-        if (_isAppActive && _experienceStage == _ExperienceStage.opening) {
-          _revealCamera();
-        }
-        setState(() => _narrationUnavailable = true);
+        setState(() {
+          _narrationUnavailable = true;
+          _audioError = 'Opening audio failed to play. Please try again.';
+        });
       }
     }
   }
@@ -791,6 +830,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
       _isInitializingCamera = false;
       _creditsController.stop(canceled: true);
       _captureTimer?.cancel();
+      _openingAudioTimer?.cancel();
       final controller = _controller;
       _controller = null;
       _mockFrames = null;
@@ -816,10 +856,10 @@ class _CameraCapturePageState extends State<CameraCapturePage>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _captureTimer?.cancel();
+    _openingAudioTimer?.cancel();
     _previewEntry.dispose();
     _entryController.dispose();
     _creditsController.dispose();
-    _binocularsController.dispose();
     _nameController.dispose();
     unawaited(_narrationEventSubscription?.cancel());
     unawaited(_switchSoundPlayer?.dispose());
@@ -848,24 +888,52 @@ class _CameraCapturePageState extends State<CameraCapturePage>
 
     return Scaffold(
       appBar: AppBar(toolbarHeight: 0),
-      body: isOnboarding
-          ? _buildOnboardingScreen()
-          : switch (_experienceStage) {
-              _ExperienceStage.opening => _buildOpeningScreen(),
-              _ExperienceStage.live => ColoredBox(
-                color: Colors.black,
-                child: SafeArea(
-                  child: Center(
-                    child: _buildEntryReveal(
-                      _previewEntry,
-                      _buildPreview(controller, isReady),
+      body: Stack(
+        children: [
+          Positioned.fill(
+            child: isOnboarding
+                ? _buildOnboardingScreen()
+                : switch (_experienceStage) {
+                    _ExperienceStage.opening => _buildOpeningScreen(),
+                    _ExperienceStage.live => ColoredBox(
+                      color: Colors.black,
+                      child: SafeArea(
+                        child: Center(
+                          child: _buildEntryReveal(
+                            _previewEntry,
+                            _buildPreview(controller, isReady),
+                          ),
+                        ),
+                      ),
+                    ),
+                    // The two onboarding stages are handled above.
+                    _ => const SizedBox.shrink(),
+                  },
+          ),
+          if (_audioError case final error?)
+            Positioned(
+              top: 16,
+              left: 16,
+              right: 16,
+              child: SafeArea(
+                child: Material(
+                  key: const ValueKey('narration-audio-error'),
+                  color: const Color(0xff572c2c),
+                  borderRadius: BorderRadius.circular(12),
+                  elevation: 8,
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Text(
+                      error,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(color: Colors.white),
                     ),
                   ),
                 ),
               ),
-              // The two onboarding stages are handled above.
-              _ => const SizedBox.shrink(),
-            },
+            ),
+        ],
+      ),
     );
   }
 
@@ -1358,32 +1426,6 @@ class _CameraCapturePageState extends State<CameraCapturePage>
               ),
             ),
           ),
-          if (_narrationRuntime != null &&
-              !_narrationUnavailable &&
-              !_isNarrationPlaying)
-            Positioned(
-              top: 18,
-              left: 18,
-              child: IgnorePointer(
-                child: Semantics(
-                  label: 'Preparing narration',
-                  child: RotationTransition(
-                    turns: _binocularsController,
-                    child: SizedBox(
-                      width: 46,
-                      height: 46,
-                      child: SvgPicture.asset(
-                        'binoculars-icon.svg',
-                        colorFilter: const ColorFilter.mode(
-                          Colors.white,
-                          BlendMode.srcIn,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
           if (_visibleNarrationPhrase case final narration?)
             Positioned(
               left: 20,

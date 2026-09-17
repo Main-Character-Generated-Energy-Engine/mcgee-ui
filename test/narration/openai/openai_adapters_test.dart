@@ -63,8 +63,8 @@ void main() {
 
       final narrationBody = api.responseBodies.single;
       expect(narrationBody['model'], 'gpt-5.6-terra');
-      expect(narrationBody['max_output_tokens'], 2000);
-      expect(narrationBody['reasoning'], {'effort': 'high'});
+      expect(narrationBody['max_output_tokens'], 1200);
+      expect(narrationBody['reasoning'], {'effort': 'medium'});
       expect(narrationBody['store'], isFalse);
       expect(_schemaName(narrationBody), 'narration_decision');
       expect(

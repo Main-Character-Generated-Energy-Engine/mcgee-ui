@@ -15,17 +15,9 @@ final class DirectCaptureInterpreter implements SceneInterpreter {
     }
     return SceneObservation(
       description:
-          'Inspect the attached captures for the current visible action. '
-          'They are ordered oldest to newest; the latest image is authoritative.',
+          'Live camera captures are attached, oldest to newest. '
+          'Latest capture: ${captures.last.id}.',
       fingerprint: 'direct-captures:${captures.last.id}',
-      details: const <String, String>{
-        'instruction':
-            'Identify a concrete action or posture, object, or spatial detail '
-            'to anchor the next fictional story beat. A single still image '
-            'does not establish a movement sequence. Do not invent unseen '
-            'actions as visual evidence. Use this visible moment to develop '
-            'the fictional goal and unresolved snag from preceding narration.',
-      },
     );
   }
 }

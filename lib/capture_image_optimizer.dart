@@ -1,42 +1,12 @@
-import 'package:flutter/foundation.dart';
-import 'package:image/image.dart' as image;
+import 'dart:typed_data';
+
+import 'capture_image_optimizer_native.dart'
+    if (dart.library.js_interop) 'capture_image_optimizer_web.dart'
+    as platform;
 
 const int captureLongestEdge = 512;
 const int captureJpegQuality = 65;
 
-/// Resizes a camera JPEG to the resolution used by low-detail model vision.
-///
-/// Encoding through [image.encodeJpg] also removes camera metadata before the
-/// frame is retained or uploaded. `compute` keeps this CPU work off the UI
-/// isolate on platforms that support isolates.
-Future<Uint8List> optimizeCaptureBytes(Uint8List bytes) {
-  return compute(_optimizeCaptureBytes, bytes);
-}
-
-Uint8List _optimizeCaptureBytes(Uint8List bytes) {
-  final decoded = image.decodeImage(bytes);
-  if (decoded == null) {
-    throw const FormatException('Camera capture is not a supported image.');
-  }
-
-  final oriented = image.bakeOrientation(decoded);
-  final longestEdge = oriented.width > oriented.height
-      ? oriented.width
-      : oriented.height;
-  final targetWidth = oriented.width >= oriented.height
-      ? captureLongestEdge
-      : null;
-  final targetHeight = oriented.height > oriented.width
-      ? captureLongestEdge
-      : null;
-  final resized = longestEdge <= captureLongestEdge
-      ? oriented
-      : image.copyResize(
-          oriented,
-          width: targetWidth,
-          height: targetHeight,
-          interpolation: image.Interpolation.average,
-        );
-
-  return image.encodeJpg(resized, quality: captureJpegQuality);
-}
+/// Shrinks camera images and strips metadata before storing or uploading them.
+Future<Uint8List> optimizeCaptureBytes(Uint8List bytes) => platform
+    .optimizeCaptureBytes(bytes, captureLongestEdge, captureJpegQuality);

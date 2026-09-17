@@ -175,14 +175,7 @@ final class NarrationEngine {
         return _skip(window, observedAt, 'The engine was stopped.');
       }
 
-      final observationReason = _policy.checkObservation(
-        observation,
-        _memory.snapshot,
-      );
       _memory.recordObservation(observation);
-      if (observationReason != null) {
-        return _skip(window, observedAt, observationReason.message);
-      }
 
       final snapshot = _memory.snapshot;
       final request = NarrationRequest(
@@ -229,9 +222,8 @@ final class NarrationEngine {
       }
 
       final text = draft.text?.trim() ?? '';
-      final draftReason = _policy.checkDraft(text, _memory.snapshot);
-      if (draftReason != null) {
-        return _skip(window, observedAt, draftReason.message);
+      if (text.isEmpty) {
+        return _skip(window, observedAt, SilenceReason.emptyNarration.message);
       }
 
       final finalStaleness = _policy.checkStaleness(observedAt, _clock());

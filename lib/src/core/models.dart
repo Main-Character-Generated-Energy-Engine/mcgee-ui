@@ -155,7 +155,7 @@ final class NarrationTextStream {
   final Future<NarrationDraft> completed;
 }
 
-/// A validated narration and its already-synthesized audio track.
+/// A spoken narration and its already-synthesized audio track.
 final class RenderedNarration {
   RenderedNarration({required this.draft, required this.track}) {
     if (!draft.shouldSpeak || (draft.text?.trim().isEmpty ?? true)) {
@@ -197,13 +197,14 @@ final class AudioTrack {
   /// an unconsumed stream; it is called at most once by [dispose].
   AudioTrack.fromStream({
     required this.id,
-    required Stream<List<int>> stream,
+    required this.stream,
     Future<void> Function()? onCancel,
     this.duration,
   }) : bytes = null,
        location = null,
-       stream = stream,
-       _onCancel = onCancel;
+       _onCancel = onCancel {
+    if (stream == null) throw ArgumentError.notNull('stream');
+  }
 
   /// Creates a track backed by in-memory audio.
   factory AudioTrack.fromBytes({
