@@ -1,16 +1,17 @@
 import { createServer } from "node:http";
 import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { handleSpeech } from "../netlify/functions/speech.mjs";
 
-export function startSpeechServer({ port = 8767, apiKey } = {}) {
+export function startSpeechServer({ port = 8767, apiKey, fetcher } = {}) {
   const server = createServer(async (req, res) => {
     const url = `http://localhost:${port}${req.url}`;
     if (new URL(url).pathname !== "/api/speech") {
       res.writeHead(404).end();
       return;
     }
+    const abort = new AbortController();
     try {
-      const abort = new AbortController();
       res.on("close", () => {
         if (!res.writableFinished) {
           abort.abort();
@@ -24,11 +25,12 @@ export function startSpeechServer({ port = 8767, apiKey } = {}) {
         duplex: "half",
         signal: abort.signal,
       });
-      const response = await handleSpeech(request, { apiKey });
+      const response = await handleSpeech(request, { apiKey, fetcher });
       res.writeHead(response.status, Object.fromEntries(response.headers));
-      if (response.body) Readable.fromWeb(response.body).pipe(res);
+      if (response.body) await pipeline(Readable.fromWeb(response.body), res);
       else res.end();
     } catch (error) {
+      if (abort.signal.aborted) return;
       console.error("Local speech server failed", error);
       if (!res.headersSent) res.writeHead(500).end();
       else res.destroy(error);
