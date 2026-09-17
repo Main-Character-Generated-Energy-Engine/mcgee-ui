@@ -1,4 +1,4 @@
-import 'package:narration_engine/fish_audio_io.dart';
+import 'package:mcgee/fish_audio_io.dart';
 
 FishAudioWebSocketTransport createFishAudioTransport() {
   return const IoFishAudioWebSocketTransport();

@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mcgee/narrative_memory_store.dart';
 import 'package:mcgee/user_profile_store.dart';
-import 'package:narration_engine/narration_engine.dart';
+import 'package:mcgee/narration_engine.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {

@@ -1,6 +1,6 @@
 import 'dart:io';
 
-import 'package:narration_engine/openrouter_io.dart';
+import 'package:mcgee/openrouter_io.dart';
 
 Future<String?> loadDefaultOpenRouterKey({required String path}) async {
   final file = File(path);

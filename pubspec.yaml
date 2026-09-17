@@ -15,8 +15,7 @@ dependencies:
   camera_windows: ^0.2.6+5
   flutter_svg: ^2.3.0
   image: ^4.5.4
-  narration_engine:
-    path: packages/narration_engine
+  msgpack_dart: ^1.0.1
   path_provider: ^2.1.6
   http: ^1.6.0
   shared_preferences: ^2.5.3
@@ -24,6 +23,7 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
+  test: ^1.31.1
 
 flutter:
   uses-material-design: true
@@ -49,3 +49,7 @@ flutter:
     - lib/assets/david-avatar.webp
     - lib/assets/eve-avatar.webp
     - lib/assets/switch.mp3
+    - test/fixtures/mock-camera-feed/1.jpg
+    - test/fixtures/mock-camera-feed/2.jpg
+    - test/fixtures/mock-camera-feed/3.jpg
+    - test/fixtures/mock-camera-feed/4.jpg

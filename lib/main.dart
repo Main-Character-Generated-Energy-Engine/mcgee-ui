@@ -6,8 +6,8 @@ import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
-import 'package:narration_engine/narration_engine.dart';
-import 'package:narration_engine/openrouter.dart';
+import 'package:mcgee/narration_engine.dart';
+import 'package:mcgee/openrouter.dart';
 
 import 'app_fonts.dart';
 import 'audio_output.dart';
@@ -16,7 +16,6 @@ import 'film_opening.dart';
 import 'film_opening_credits.dart';
 import 'fish_audio_key_loader.dart';
 import 'fish_audio_transport.dart';
-import 'netlify_narration_endpoint.dart';
 import 'narrative_memory_store.dart';
 import 'narrator_profile.dart';
 import 'openrouter_key_loader.dart';
@@ -39,7 +38,9 @@ class MainApp extends StatelessWidget {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        fontFamily: AppFonts.bodyFamily,
+        // Dialogs, form controls, and subtitles use the Material UI face.
+        // The film-title view opts into Cormorant separately.
+        fontFamily: AppFonts.dialogFamily,
         brightness: Brightness.dark,
         colorScheme: ColorScheme.fromSeed(
           seedColor: const Color(0xff8ee6c7),
@@ -74,6 +75,10 @@ enum _ExperienceStage { setup, cameraConsent, opening, live }
 class _CameraCapturePageState extends State<CameraCapturePage>
     with WidgetsBindingObserver, TickerProviderStateMixin {
   CameraController? _controller;
+  List<Uint8List>? _mockFrames;
+  int _mockFrameIndex = 0;
+  bool get _cameraReady =>
+      _mockFrames != null || (_controller?.value.isInitialized ?? false);
   late final AnimationController _entryController;
   late final AnimationController _creditsController;
   late final AnimationController _binocularsController;
@@ -236,13 +241,40 @@ class _CameraCapturePageState extends State<CameraCapturePage>
     setState(() {
       _isInitializingCamera = true;
       _error = null;
-      if (!_startupLineRequested) {
-        _experienceStage = _ExperienceStage.opening;
-        _creditsController.reset();
-      }
     });
-    _startCreditsIfReady();
     try {
+      if (const bool.fromEnvironment('MOCK_CAMERA_FEED')) {
+        final frames = <Uint8List>[];
+        for (var index = 1; index <= 4; index++) {
+          final data = await rootBundle.load(
+            'test/fixtures/mock-camera-feed/$index.jpg',
+          );
+          frames.add(data.buffer.asUint8List());
+        }
+        final captureStore = await createCaptureStore();
+        if (!mounted || !_isAppActive || generation != _cameraGeneration) {
+          return;
+        }
+        setState(() {
+          _mockFrames = frames;
+          _mockFrameIndex = 0;
+          _captureStore = captureStore;
+          _error = null;
+          if (!_startupLineRequested) {
+            _experienceStage = _ExperienceStage.opening;
+            _creditsController.reset();
+          }
+        });
+        _startCreditsIfReady();
+        final runtime = _narrationRuntime;
+        if (!_startupLineRequested && runtime != null) {
+          unawaited(_beginPreparedOpening(runtime, generation));
+        } else {
+          _revealCamera();
+          _startCaptureLoop(captureImmediately: true);
+        }
+        return;
+      }
       final cameras = await availableCameras();
       if (cameras.isEmpty) {
         throw CameraException(
@@ -271,7 +303,14 @@ class _CameraCapturePageState extends State<CameraCapturePage>
         _controller = controller;
         _captureStore = captureStore;
         _error = null;
+        if (!_startupLineRequested) {
+          // CameraController.initialize completes only after camera access is
+          // granted, so credits cannot appear during the permission prompt.
+          _experienceStage = _ExperienceStage.opening;
+          _creditsController.reset();
+        }
       });
+      _startCreditsIfReady();
       final runtime = _narrationRuntime;
       if (!_startupLineRequested && runtime != null) {
         unawaited(_beginPreparedOpening(runtime, generation));
@@ -378,13 +417,14 @@ class _CameraCapturePageState extends State<CameraCapturePage>
 
   Future<void> _capturePhoto() async {
     final controller = _controller;
+    final mockFrames = _mockFrames;
     final captureStore = _captureStore;
-    if (controller == null ||
-        !controller.value.isInitialized ||
+    if ((mockFrames == null &&
+            (controller == null || !controller.value.isInitialized)) ||
         captureStore == null) {
       return;
     }
-    if (_isCapturing || controller.value.isTakingPicture) {
+    if (_isCapturing || (controller?.value.isTakingPicture ?? false)) {
       return;
     }
 
@@ -392,10 +432,17 @@ class _CameraCapturePageState extends State<CameraCapturePage>
     try {
       final capturedAt = DateTime.now().toUtc();
       final timestamp = capturedAt.millisecondsSinceEpoch ~/ 1000;
-      final image = await controller.takePicture();
+      final Uint8List bytes;
+      if (mockFrames != null) {
+        bytes = mockFrames[_mockFrameIndex % mockFrames.length];
+        if (mounted) setState(() => _mockFrameIndex++);
+      } else {
+        final image = await controller!.takePicture();
+        bytes = await image.readAsBytes();
+      }
       final capture = await captureStore.save(
         timestamp: timestamp,
-        readBytes: image.readAsBytes,
+        readBytes: () async => bytes,
       );
       unawaited(_narrateCapture(capture, capturedAt));
     } on CameraException catch (exception, stackTrace) {
@@ -450,28 +497,21 @@ class _CameraCapturePageState extends State<CameraCapturePage>
       _connectionError = null;
     });
     try {
-      final narrationEndpoint = kIsWeb
-          ? defaultNetlifyNarrationEndpoint()
-          : null;
       final apiKey = kIsWeb
-          ? null
+          ? const String.fromEnvironment('OPENROUTER_API_KEY')
           : widget.ioApiKeyOverride ?? await loadDefaultOpenRouterKey();
-      if (!kIsWeb && apiKey == null) {
-        throw StateError('Native narration requires .secrets/openrouter-key.');
+      if (apiKey == null || apiKey.trim().isEmpty) {
+        throw StateError(
+          kIsWeb
+              ? 'Web narration requires OPENROUTER_API_KEY at build time.'
+              : 'Native narration requires .secrets/openrouter-key.',
+        );
       }
       String? fishAudioCredential;
       if (!kIsWeb) {
-        try {
-          fishAudioCredential = fishAudioTransportCredential(
-            await loadDefaultFishAudioKey(),
-          );
-        } catch (error, stackTrace) {
-          _printError(
-            'Direct Fish Audio configuration unavailable; using OpenRouter TTS',
-            error,
-            stackTrace,
-          );
-        }
+        fishAudioCredential = fishAudioTransportCredential(
+          await loadDefaultFishAudioKey(),
+        );
       }
 
       final narratorProfiles = await loadNarratorProfiles();
@@ -486,10 +526,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
           voice: _actors[_selectedActor]!,
           language: _selectedLanguage,
           fishAudioCredential: fishAudioCredential,
-          fishAudioTransport: fishAudioCredential == null
-              ? null
-              : createFishAudioTransport(),
-          narrationEndpoint: narrationEndpoint,
+          fishAudioTransport: kIsWeb ? null : createFishAudioTransport(),
           memory: _episodeMemory,
         );
       } catch (error, stackTrace) {
@@ -548,15 +585,9 @@ class _CameraCapturePageState extends State<CameraCapturePage>
           unawaited(
             _narrativeMemoryStore
                 .save(characterName: characterName, snapshot: runtime.memory)
-                .catchError(
-                  (error, stackTrace) {
-                    _printError(
-                      'Story memory saving failed',
-                      error,
-                      stackTrace,
-                    );
-                  },
-                ),
+                .catchError((error, stackTrace) {
+                  _printError('Story memory saving failed', error, stackTrace);
+                }),
           );
         }
         final isPlaying = runtime.isPlaying;
@@ -620,26 +651,37 @@ class _CameraCapturePageState extends State<CameraCapturePage>
   ) async {
     final revision = _actorSelectionGeneration;
     try {
-      return await runtime.prepareOpening(onCredits: (opening) {
-        if (!mounted ||
-            !identical(runtime, _narrationRuntime) ||
-            revision != _actorSelectionGeneration) {
-          return;
-        }
-        setState(() {
-          _filmOpening = opening;
-        });
-        _startCreditsIfReady();
-      });
+      return await runtime.prepareOpening(
+        onCredits: (opening) {
+          if (!mounted ||
+              !identical(runtime, _narrationRuntime) ||
+              revision != _actorSelectionGeneration) {
+            return;
+          }
+          setState(() {
+            _filmOpening = opening;
+          });
+          _startCreditsIfReady();
+        },
+      );
     } catch (error, stackTrace) {
       if (revision != _actorSelectionGeneration) return null;
       _printError('Film opening preparation failed', error, stackTrace);
+      if (mounted &&
+          identical(runtime, _narrationRuntime) &&
+          error.toString().contains('HTTP 402')) {
+        setState(
+          () => _error =
+              'Fish Audio rejected s2.1-pro-free. Check free-tier access with Fish Audio (HTTP 402).',
+        );
+      }
       return null; // A failed opening must not prevent live narration.
     }
   }
 
   void _startCreditsIfReady() {
     if (_isAppActive &&
+        _cameraReady &&
         _experienceStage == _ExperienceStage.opening &&
         _filmOpening != null &&
         !_creditsController.isAnimating &&
@@ -751,6 +793,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
       _captureTimer?.cancel();
       final controller = _controller;
       _controller = null;
+      _mockFrames = null;
       if (mounted) {
         setState(() {
           _error = null;
@@ -763,7 +806,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
       _isAppActive = true;
       if ((_experienceStage == _ExperienceStage.live ||
               _experienceStage == _ExperienceStage.opening) &&
-          _controller == null) {
+          !_cameraReady) {
         unawaited(_initializeCamera());
       }
     }
@@ -798,229 +841,271 @@ class _CameraCapturePageState extends State<CameraCapturePage>
   @override
   Widget build(BuildContext context) {
     final controller = _controller;
-    final isReady = controller?.value.isInitialized ?? false;
+    final isReady = _cameraReady;
+    final isOnboarding =
+        _experienceStage == _ExperienceStage.setup ||
+        _experienceStage == _ExperienceStage.cameraConsent;
 
     return Scaffold(
       appBar: AppBar(toolbarHeight: 0),
-      body: switch (_experienceStage) {
-        _ExperienceStage.setup => _buildSetupScreen(),
-        _ExperienceStage.cameraConsent => _buildCameraConsentScreen(),
-        _ExperienceStage.opening => _buildOpeningScreen(),
-        _ExperienceStage.live => ColoredBox(
-          color: Colors.black,
-          child: SafeArea(
-            child: Center(
-              child: _buildEntryReveal(
-                _previewEntry,
-                _buildPreview(controller, isReady),
+      body: isOnboarding
+          ? _buildOnboardingScreen()
+          : switch (_experienceStage) {
+              _ExperienceStage.opening => _buildOpeningScreen(),
+              _ExperienceStage.live => ColoredBox(
+                color: Colors.black,
+                child: SafeArea(
+                  child: Center(
+                    child: _buildEntryReveal(
+                      _previewEntry,
+                      _buildPreview(controller, isReady),
+                    ),
+                  ),
+                ),
               ),
-            ),
-          ),
-        ),
-      },
+              // The two onboarding stages are handled above.
+              _ => const SizedBox.shrink(),
+            },
     );
   }
 
   Widget _buildOpeningScreen() {
     final opening = _filmOpening;
-    if (opening == null) {
+    if (opening == null || !_cameraReady) {
       return const SizedBox.expand(child: ColoredBox(color: Colors.black));
     }
     return DefaultTextStyle.merge(
       style: AppFonts.openingStyle,
-      child: FilmOpeningCredits(opening: opening, animation: _creditsController),
-    );
-  }
-
-  Widget _buildSetupScreen() {
-    return _buildOnboardingBackground(
-      Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Semantics(
-            label: 'MCgEe',
-            image: true,
-            child: Container(
-              height: 190,
-              clipBehavior: Clip.antiAlias,
-              decoration: BoxDecoration(
-                color: const Color(0xfffff8ec),
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: const Color(0xffffb04a), width: 2),
-                boxShadow: const <BoxShadow>[
-                  BoxShadow(
-                    color: Colors.black45,
-                    blurRadius: 24,
-                    offset: Offset(0, 10),
-                  ),
-                ],
-              ),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 8,
-                ),
-                child: ClipRect(
-                  child: Transform.scale(
-                    scale: 2.15,
-                    child: SvgPicture.asset(
-                      'lib/assets/logo.svg',
-                      fit: BoxFit.contain,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 24),
-          _buildProtagonistIdentity(),
-          const SizedBox(height: 24),
-          _buildSetupActorSelector(),
-          const SizedBox(height: 24),
-          DropdownButtonFormField<NarrationLanguage>(
-            key: const ValueKey('narration-language-selector'),
-            initialValue: _selectedLanguage,
-            decoration: const InputDecoration(
-              labelText: 'Narration language',
-              prefixIcon: Icon(Icons.language_rounded),
-            ),
-            items: <DropdownMenuItem<NarrationLanguage>>[
-              for (final language in NarrationLanguage.values)
-                DropdownMenuItem<NarrationLanguage>(
-                  value: language,
-                  child: Text(language.nativeName),
-                ),
-            ],
-            onChanged: _isConnecting
-                ? null
-                : (language) {
-                    if (language == null) return;
-                    setState(() => _selectedLanguage = language);
-                  },
-          ),
-          if (_connectionError case final error?) ...[
-            const SizedBox(height: 16),
-            Text(
-              error,
-              textAlign: TextAlign.center,
-              style: const TextStyle(color: Color(0xffffa9a9)),
-            ),
-          ],
-          const SizedBox(height: 24),
-          FilledButton.icon(
-            key: const ValueKey('continue-setup-button'),
-            onPressed:
-                _isConnecting || _isLoadingProfile || _isSavingProfile
-                ? null
-                : _continueSetup,
-            icon: _isConnecting || _isSavingProfile
-                ? const SizedBox.square(
-                    dimension: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.arrow_forward_rounded),
-            label: Text(
-              _isSavingProfile
-                  ? 'Saving…'
-                  : _isConnecting
-                  ? 'Connecting…'
-                  : 'Continue',
-            ),
-          ),
-          if (_controller?.value.isInitialized ?? false) ...[
-            const SizedBox(height: 8),
-            TextButton(
-              onPressed: _isConnecting
-                  ? null
-                  : () {
-                      setState(() => _experienceStage = _ExperienceStage.live);
-                      _startCaptureLoop(captureImmediately: false);
-                    },
-              child: const Text('Back to camera'),
-            ),
-          ],
-        ],
+      child: FilmOpeningCredits(
+        opening: opening,
+        animation: _creditsController,
       ),
     );
   }
 
-  Widget _buildCameraConsentScreen() {
+  Widget _buildOnboardingScreen() {
+    final content = switch (_experienceStage) {
+      _ExperienceStage.setup => _buildSetupContent(),
+      _ExperienceStage.cameraConsent => _buildCameraConsentContent(),
+      _ => const SizedBox.shrink(),
+    };
     return _buildOnboardingBackground(
-      Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const Icon(Icons.auto_awesome_rounded, color: Colors.white, size: 54),
-          const SizedBox(height: 22),
-          Text(
-            '${_userName ?? 'Your'}${_userName == null ? '' : '’s'} '
-            'story is waiting.',
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 34,
-              fontWeight: FontWeight.w700,
-              letterSpacing: -1,
+      AnimatedSize(
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeInOutCubic,
+        child: AnimatedSwitcher(
+          duration: const Duration(milliseconds: 240),
+          reverseDuration: const Duration(milliseconds: 180),
+          switchInCurve: Curves.easeOutCubic,
+          switchOutCurve: Curves.easeInCubic,
+          transitionBuilder: (child, animation) => FadeTransition(
+            opacity: animation,
+            child: ScaleTransition(
+              scale: Tween<double>(begin: 0.98, end: 1).animate(animation),
+              child: child,
             ),
           ),
-          const SizedBox(height: 14),
-          Text(
-            'The lights are ready. $_selectedActor has '
-            'cleared their throat. All that remains is for '
-            '${_userName ?? 'you'} to step into frame.',
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.76),
-              fontSize: 17,
-              height: 1.45,
+          child: KeyedSubtree(key: ValueKey(_experienceStage), child: content),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSetupContent() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Semantics(
+          label: 'MCgEe',
+          image: true,
+          child: Container(
+            height: 190,
+            clipBehavior: Clip.antiAlias,
+            decoration: BoxDecoration(
+              color: const Color(0xfffff8ec),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: const Color(0xffffb04a), width: 2),
+              boxShadow: const <BoxShadow>[
+                BoxShadow(
+                  color: Colors.black45,
+                  blurRadius: 24,
+                  offset: Offset(0, 10),
+                ),
+              ],
+            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              child: ClipRect(
+                child: Transform.scale(
+                  scale: 2.15,
+                  child: SvgPicture.asset(
+                    'lib/assets/logo.svg',
+                    fit: BoxFit.contain,
+                  ),
+                ),
+              ),
             ),
           ),
-          const SizedBox(height: 14),
-          Text(
-            'Allow camera access while this tab is open, and let the ordinary '
-            'receive the gravitas it deserves.',
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.76),
-              fontSize: 17,
-              height: 1.45,
-            ),
+        ),
+        const SizedBox(height: 24),
+        _buildProtagonistIdentity(),
+        const SizedBox(height: 24),
+        _buildSetupActorSelector(),
+        const SizedBox(height: 24),
+        DropdownButtonFormField<NarrationLanguage>(
+          key: const ValueKey('narration-language-selector'),
+          initialValue: _selectedLanguage,
+          decoration: const InputDecoration(
+            labelText: 'Narration language',
+            prefixIcon: Icon(Icons.language_rounded),
           ),
-          if (_error case final error?) ...[
-            const SizedBox(height: 18),
-            Text(
-              error,
-              textAlign: TextAlign.center,
-              style: const TextStyle(color: Color(0xffffa9a9)),
-            ),
+          items: <DropdownMenuItem<NarrationLanguage>>[
+            for (final language in NarrationLanguage.values)
+              DropdownMenuItem<NarrationLanguage>(
+                value: language,
+                child: Text(language.nativeName),
+              ),
           ],
-          const SizedBox(height: 28),
-          FilledButton.icon(
-            key: const ValueKey('enable-camera-button'),
-            onPressed: _isInitializingCamera ? null : _initializeCamera,
-            icon: _isInitializingCamera
-                ? const SizedBox.square(
-                    dimension: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.videocam_rounded),
-            label: Text(
-              _isInitializingCamera
-                  ? 'Summoning the camera…'
-                  : 'Give me main character energy',
-            ),
-          ),
-          const SizedBox(height: 8),
-          TextButton(
-            onPressed: _isInitializingCamera
-                ? null
-                : () {
-                    setState(() => _experienceStage = _ExperienceStage.setup);
-                  },
-            child: const Text('Change narrator or language'),
+          onChanged: _isConnecting
+              ? null
+              : (language) {
+                  if (language == null) return;
+                  setState(() => _selectedLanguage = language);
+                },
+        ),
+        if (_connectionError case final error?) ...[
+          const SizedBox(height: 16),
+          Text(
+            error,
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Color(0xffffa9a9)),
           ),
         ],
+        const SizedBox(height: 24),
+        FilledButton.icon(
+          key: const ValueKey('continue-setup-button'),
+          onPressed: _isConnecting || _isLoadingProfile || _isSavingProfile
+              ? null
+              : _continueSetup,
+          icon: _isConnecting || _isSavingProfile
+              ? const SizedBox.square(
+                  dimension: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.arrow_forward_rounded),
+          label: Text(
+            _isSavingProfile
+                ? 'Saving…'
+                : _isConnecting
+                ? 'Connecting…'
+                : 'Continue',
+          ),
+        ),
+        if (_controller?.value.isInitialized ?? false) ...[
+          const SizedBox(height: 8),
+          TextButton(
+            onPressed: _isConnecting
+                ? null
+                : () {
+                    setState(() => _experienceStage = _ExperienceStage.live);
+                    _startCaptureLoop(captureImmediately: false);
+                  },
+            child: const Text('Back to camera'),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildCameraConsentContent() {
+    return CallbackShortcuts(
+      bindings: <ShortcutActivator, VoidCallback>{
+        const SingleActivator(LogicalKeyboardKey.enter): _initializeCamera,
+        const SingleActivator(LogicalKeyboardKey.numpadEnter):
+            _initializeCamera,
+      },
+      child: Focus(
+        autofocus: true,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Icon(
+              Icons.auto_awesome_rounded,
+              color: Colors.white,
+              size: 54,
+            ),
+            const SizedBox(height: 22),
+            Text(
+              '${_userName ?? 'Your'}${_userName == null ? '' : '’s'} '
+              'story is waiting.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 34,
+                fontWeight: FontWeight.w700,
+                letterSpacing: -1,
+              ),
+            ),
+            const SizedBox(height: 14),
+            Text(
+              'The lights are ready. $_selectedActor has '
+              'cleared their throat. All that remains is for '
+              '${_userName ?? 'you'} to step into frame.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.76),
+                fontSize: 17,
+                height: 1.45,
+              ),
+            ),
+            const SizedBox(height: 14),
+            Text(
+              'Allow camera access while this tab is open, and let the ordinary '
+              'receive the gravitas it deserves.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.76),
+                fontSize: 17,
+                height: 1.45,
+              ),
+            ),
+            if (_error case final error?) ...[
+              const SizedBox(height: 18),
+              Text(
+                error,
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Color(0xffffa9a9)),
+              ),
+            ],
+            const SizedBox(height: 28),
+            FilledButton.icon(
+              key: const ValueKey('enable-camera-button'),
+              onPressed: _isInitializingCamera ? null : _initializeCamera,
+              icon: _isInitializingCamera
+                  ? const SizedBox.square(
+                      dimension: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.videocam_rounded),
+              label: Text(
+                _isInitializingCamera
+                    ? 'Summoning the camera…'
+                    : 'Give me main character energy',
+              ),
+            ),
+            const SizedBox(height: 8),
+            TextButton(
+              onPressed: _isInitializingCamera
+                  ? null
+                  : () {
+                      setState(() => _experienceStage = _ExperienceStage.setup);
+                    },
+              child: const Text('Change narrator or language'),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1217,6 +1302,22 @@ class _CameraCapturePageState extends State<CameraCapturePage>
         ),
       );
     }
+    if (_mockFrames case final frames? when frames.isNotEmpty) {
+      return _buildTelevision(
+        Stack(
+          fit: StackFit.expand,
+          children: [
+            Image.memory(
+              frames[(_mockFrameIndex == 0 ? 0 : _mockFrameIndex - 1) %
+                  frames.length],
+              fit: BoxFit.cover,
+              gaplessPlayback: true,
+            ),
+            IgnorePointer(child: CustomPaint(painter: _OldTvEffectPainter())),
+          ],
+        ),
+      );
+    }
     if (!isReady || controller == null) {
       return _buildTelevision(const Center(child: CircularProgressIndicator()));
     }
@@ -1296,6 +1397,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
                   narration,
                   textAlign: TextAlign.center,
                   style: const TextStyle(
+                    fontFamily: AppFonts.dialogFamily,
                     color: Colors.white,
                     fontSize: 16,
                     shadows: <Shadow>[

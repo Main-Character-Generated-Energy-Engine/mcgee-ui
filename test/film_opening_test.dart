@@ -1,11 +1,10 @@
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mcgee/film_opening.dart';
 import 'package:mcgee/narrator_profile.dart';
-import 'package:narration_engine/narration_engine.dart';
-import 'package:narration_engine/openai.dart';
+import 'package:mcgee/narration_engine.dart';
+import 'package:mcgee/openai.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -29,7 +28,6 @@ void main() {
       expect(client.body['max_output_tokens'], 2400);
       expect(client.body['store'], isFalse);
       expect(jsonEncode(client.body), isNot(contains('input_image')));
-      expect(client.speechCalls, 0);
     },
   );
 
@@ -77,7 +75,6 @@ final class _OpeningApi implements OpenAiApi {
   final String narration;
   int responseCalls = 0;
   late Map<String, Object?> body;
-  int speechCalls = 0;
 
   @override
   Future<Map<String, Object?>> createResponse(Map<String, Object?> body) async {
@@ -99,11 +96,5 @@ final class _OpeningApi implements OpenAiApi {
         },
       ],
     };
-  }
-
-  @override
-  Future<Uint8List> createSpeech(Map<String, Object?> body) async {
-    speechCalls++;
-    return Uint8List.fromList([1]);
   }
 }

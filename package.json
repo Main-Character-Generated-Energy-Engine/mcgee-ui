@@ -1,14 +1,12 @@
 {
-  "name": "mcgee-netlify",
+  "name": "mcgee-web",
   "private": true,
   "type": "module",
   "scripts": {
-    "dev:functions": "node scripts/dev-functions.mjs",
-    "deploy": "npm test && flutter test && flutter build web --release && netlify deploy --prod --dir=build/web --functions=netlify/functions",
+    "dev:web": "node scripts/web.mjs dev",
+    "dev:e2e": "node scripts/web.mjs e2e",
+    "build:web": "node scripts/web.mjs build",
+    "deploy": "node scripts/web.mjs deploy",
     "test": "node --test test/*_test.mjs"
-  },
-  "dependencies": {
-    "@msgpack/msgpack": "^3.1.3",
-    "ws": "^8.21.0"
   }
 }

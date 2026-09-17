@@ -10,7 +10,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mcgee/main.dart';
 import 'package:mcgee/narrative_memory_store.dart';
 import 'package:mcgee/user_profile_store.dart';
-import 'package:narration_engine/narration_engine.dart';
+import 'package:mcgee/narration_engine.dart';
 
 void main() {
   testWidgets('builds the app shell with an injected home', (tester) async {
@@ -74,12 +74,9 @@ void main() {
     );
 
     expect(find.byKey(const ValueKey('openrouter-key-field')), findsNothing);
-    await tester.ensureVisible(
-      find.byKey(const ValueKey('continue-setup-button')),
-    );
-    await tester.pump();
+    final continueButton = find.byKey(const ValueKey('continue-setup-button'));
     await tester.runAsync(() async {
-      await tester.tap(find.byKey(const ValueKey('continue-setup-button')));
+      tester.widget<FilledButton>(continueButton).onPressed!();
       // The IO host checks for optional local credential files before it
       // builds the runtime; allow those real filesystem futures to finish.
       await Future<void>.delayed(const Duration(milliseconds: 100));
@@ -104,7 +101,7 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
-  testWidgets('asks once for a name and offers returning users an edit link', (
+  testWidgets('submitting a name with Enter morphs the onboarding card', (
     tester,
   ) async {
     final profile = _MemoryUserProfileStore(null);
@@ -121,24 +118,30 @@ void main() {
 
     final field = find.byKey(const ValueKey('user-name-field'));
     expect(field, findsOneWidget);
-    await tester.ensureVisible(
+    tester.widget<FilledButton>(
       find.byKey(const ValueKey('continue-setup-button')),
-    );
-    await tester.pump();
-    await tester.tap(find.byKey(const ValueKey('continue-setup-button')));
+    ).onPressed!();
     await tester.pump();
     expect(find.text('Enter the name the narrator should use.'), findsOneWidget);
 
     await tester.enterText(field, '  Sam  ');
-    await tester.ensureVisible(
-      find.byKey(const ValueKey('continue-setup-button')),
-    );
-    await tester.pump();
-    await tester.tap(find.byKey(const ValueKey('continue-setup-button')));
-    for (var attempt = 0; attempt < 20 && profile.name != 'Sam'; attempt++) {
-      await tester.pump(const Duration(milliseconds: 10));
+    await tester.runAsync(() async {
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    });
+    final consentHeading = find.text('Sam’s story is waiting.');
+    for (
+      var attempt = 0;
+      attempt < 40 &&
+          (profile.name != 'Sam' || consentHeading.evaluate().isEmpty);
+      attempt++
+    ) {
+      await tester.pump(const Duration(milliseconds: 50));
     }
     expect(profile.name, 'Sam');
+    expect(consentHeading, findsOneWidget);
+    expect(find.byType(Dialog), findsNothing);
+    expect(find.byType(CallbackShortcuts), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox.shrink());
   });

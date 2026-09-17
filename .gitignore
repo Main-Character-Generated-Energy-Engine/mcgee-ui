@@ -20,6 +20,7 @@ migrate_working_dir/
 .playwright-cli/
 
 .secrets/
+/captures/
 
 # The .vscode folder contains launch configuration and tasks you configure in
 # VS Code which you may wish to be included in version control, so this line
@@ -50,5 +51,5 @@ app.*.map.json
 # Local Netlify folder
 .netlify
 
-# Node dependencies used to bundle Netlify Functions
+# Node dependencies
 node_modules/

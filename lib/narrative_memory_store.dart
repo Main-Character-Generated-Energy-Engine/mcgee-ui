@@ -1,6 +1,6 @@
 import 'dart:convert';
 
-import 'package:narration_engine/narration_engine.dart';
+import 'package:mcgee/narration_engine.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'user_profile_store.dart';

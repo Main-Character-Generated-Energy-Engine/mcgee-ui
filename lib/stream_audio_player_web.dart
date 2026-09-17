@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:js_interop';
 import 'dart:typed_data';
 
-import 'package:narration_engine/narration_engine.dart';
+import 'package:mcgee/narration_engine.dart';
 
 import 'stream_audio_player.dart';
 

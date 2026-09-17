@@ -1,20 +1,22 @@
 import 'dart:async';
 import 'dart:math';
 
-import 'package:narration_engine/narration_engine.dart';
-import 'package:narration_engine/fish_audio.dart';
-import 'package:narration_engine/openrouter.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:mcgee/narration_engine.dart';
+import 'package:mcgee/fish_audio.dart';
+import 'package:mcgee/openrouter.dart';
 
 import 'capture_store.dart';
+import 'direct_http_speech_synthesizer.dart';
+import 'direct_narration_renderer.dart';
 import 'film_opening.dart';
-import 'netlify_narration_renderer.dart';
 import 'narrator_profile.dart';
 
 /// Allows enough time for both multimodal writing and speech synthesis while
 /// still preventing old camera frames from entering the live audio stream.
 const liveMaximumObservationAge = Duration(seconds: 20);
 
-/// Thin host composition root for the independently testable package.
+/// Composition root for the app's narration engine and provider adapters.
 final class OpenRouterNarrationRuntime {
   OpenRouterNarrationRuntime._({
     required OpenRouterHttpClient client,
@@ -23,14 +25,14 @@ final class OpenRouterNarrationRuntime {
     required NarrationLanguage language,
     required String characterName,
     required _NarratorSelection narratorSelection,
-    NetlifyNarrationRenderer? netlifyRenderer,
+    DirectHttpSpeechSynthesizer? directHttpSpeech,
   }) : _client = client,
        _engine = engine,
        _speechSynthesizer = speechSynthesizer,
        _language = language,
        _characterName = characterName,
        _narratorSelection = narratorSelection,
-       _netlifyRenderer = netlifyRenderer;
+       _directHttpSpeech = directHttpSpeech;
 
   factory OpenRouterNarrationRuntime({
     String? apiKey,
@@ -41,7 +43,6 @@ final class OpenRouterNarrationRuntime {
     NarrationLanguage language = NarrationLanguage.english,
     String? fishAudioCredential,
     FishAudioWebSocketTransport? fishAudioTransport,
-    Uri? narrationEndpoint,
     NarrativeMemory? memory,
   }) {
     final selection = _NarratorSelection(narratorProfiles, voice);
@@ -54,26 +55,42 @@ final class OpenRouterNarrationRuntime {
       );
     }
     final key = apiKey?.trim();
-    if (narrationEndpoint == null &&
-        (key == null || key.isEmpty || key.contains(RegExp(r'\s')))) {
+    if (key == null || key.isEmpty || key.contains(RegExp(r'\s'))) {
       throw const FormatException('The selected OpenRouter key is invalid.');
     }
-    final client = OpenRouterHttpClient(apiKey: key ?? 'server-managed');
+    const mockEndpoint = String.fromEnvironment('OPENROUTER_ENDPOINT');
+    final client = OpenRouterHttpClient(
+      apiKey: key,
+      baseUri: mockEndpoint.isEmpty ? null : Uri.parse(mockEndpoint),
+    );
     final random = Random();
-    final netlifyRenderer = narrationEndpoint == null
-        ? null
-        : NetlifyNarrationRenderer(
-            endpoint: narrationEndpoint,
+    final directHttpSpeech = kIsWeb
+        ? DirectHttpSpeechSynthesizer(
+            fishApiKey: '',
             voice: voice,
-            language: language,
-            characterName: normalizedCharacterName,
-          );
+            endpoint: Uri.base.resolve(
+              const String.fromEnvironment(
+                'SPEECH_ENDPOINT',
+                defaultValue: '/api/speech',
+              ),
+            ),
+          )
+        : null;
     final speechSynthesizer = _SelectableSpeechSynthesizer(
-      client: client,
       voice: voice,
       fishAudioCredential: fishAudioCredential,
       fishAudioTransport: fishAudioTransport,
-      remoteSynthesizer: netlifyRenderer,
+      directHttpSpeech: directHttpSpeech,
+    );
+    final narrator = OpenRouterNarrationModel(
+      client: client,
+      requireSpokenLine: true,
+      includeCaptures: true,
+      continuous: true,
+      maximumWords: 20,
+      language: language,
+      characterName: normalizedCharacterName,
+      narratorInstructions: () => selection.profile.liveInstructions,
     );
     return OpenRouterNarrationRuntime._(
       client: client,
@@ -81,19 +98,15 @@ final class OpenRouterNarrationRuntime {
         // The narration model sees the latest image directly. A local scene
         // marker avoids a second, sequential vision request on the live path.
         sceneInterpreter: const DirectCaptureInterpreter(),
-        narrator: OpenRouterNarrationModel(
-          client: client,
-          requireSpokenLine: true,
-          includeCaptures: true,
-          continuous: true,
-          maximumWords: 20,
-          language: language,
-          characterName: normalizedCharacterName,
-          narratorInstructions: () => selection.profile.liveInstructions,
-        ),
+        narrator: narrator,
         speechSynthesizer: speechSynthesizer,
         audioOutput: audioOutput,
-        narrationRenderer: netlifyRenderer,
+        narrationRenderer: kIsWeb
+            ? DirectNarrationRenderer(
+                narrator: narrator,
+                speech: speechSynthesizer,
+              )
+            : null,
         promptBuilder: ContinuousDocumentaryPromptBuilder(
           maximumWords: 20,
           language: language,
@@ -124,7 +137,7 @@ final class OpenRouterNarrationRuntime {
       language: language,
       characterName: normalizedCharacterName,
       narratorSelection: selection,
-      netlifyRenderer: netlifyRenderer,
+      directHttpSpeech: directHttpSpeech,
     );
   }
 
@@ -136,7 +149,7 @@ final class OpenRouterNarrationRuntime {
   final _NarratorSelection _narratorSelection;
   int _voiceGeneration = 0;
   int _pendingVoiceSwitches = 0;
-  final NetlifyNarrationRenderer? _netlifyRenderer;
+  final DirectHttpSpeechSynthesizer? _directHttpSpeech;
   final Set<AudioTrack> _preparedTracks = {};
   bool _closed = false;
 
@@ -151,13 +164,12 @@ final class OpenRouterNarrationRuntime {
   }) async {
     if (_closed) throw StateError('The narration runtime is closed.');
     final generation = _voiceGeneration;
-    final opening = await (_netlifyRenderer?.generateOpening() ??
-        generateFilmOpening(
-          _client,
-          _language,
-          characterName: _characterName,
-          profile: _narratorSelection.profile,
-        ));
+    final opening = await generateFilmOpening(
+      _client,
+      _language,
+      characterName: _characterName,
+      profile: _narratorSelection.profile,
+    );
     _checkOpeningGeneration(generation);
     onCredits(opening);
     final track = await _speechSynthesizer
@@ -187,7 +199,9 @@ final class OpenRouterNarrationRuntime {
   Future<NarrationOutcome> speakOpening(PreparedFilmOpening opening) {
     if (_closed) throw StateError('The narration runtime is closed.');
     final generation = _preparedOpeningGenerations[opening];
-    if (generation == null) throw StateError('Opening belongs to another runtime.');
+    if (generation == null) {
+      throw StateError('Opening belongs to another runtime.');
+    }
     _checkOpeningGeneration(generation);
     _preparedTracks.remove(opening.track);
     return _engine.speak(
@@ -212,9 +226,9 @@ final class OpenRouterNarrationRuntime {
     return _engine.submit(<CapturedImage>[latestCapture]);
   }
 
-  Future<void> stop() {
-    _netlifyRenderer?.cancelPending();
-    return _engine.stop();
+  Future<void> stop() async {
+    await _engine.stop();
+    await _directHttpSpeech?.cancelPending();
   }
 
   Future<void> setVoice(OpenRouterVoiceOption voice) async {
@@ -223,8 +237,7 @@ final class OpenRouterNarrationRuntime {
     _voiceGeneration++;
     _pendingVoiceSwitches++;
     _speechSynthesizer.voice = voice;
-    _netlifyRenderer?.voice = voice;
-    _netlifyRenderer?.cancelPending();
+    _directHttpSpeech?.voice = voice;
     for (final track in _preparedTracks) {
       unawaited(track.dispose());
     }
@@ -232,6 +245,7 @@ final class OpenRouterNarrationRuntime {
     try {
       // stop invalidates prefetched and in-flight work synchronously.
       await _engine.stop();
+      await _directHttpSpeech?.cancelPending();
     } finally {
       _pendingVoiceSwitches--;
     }
@@ -240,7 +254,7 @@ final class OpenRouterNarrationRuntime {
   Future<void> close() async {
     if (_closed) return;
     _closed = true;
-    _netlifyRenderer?.close();
+    _directHttpSpeech?.close();
     for (final track in _preparedTracks) {
       await track.dispose();
     }
@@ -252,159 +266,42 @@ final class OpenRouterNarrationRuntime {
 
 final class _SelectableSpeechSynthesizer implements StreamingSpeechSynthesizer {
   _SelectableSpeechSynthesizer({
-    required this.client,
     required this.voice,
-    this.fishAudioCredential,
-    this.fishAudioTransport,
-    this.remoteSynthesizer,
+    required this.fishAudioCredential,
+    required this.fishAudioTransport,
+    this.directHttpSpeech,
   });
 
-  final OpenRouterHttpClient client;
   final String? fishAudioCredential;
   final FishAudioWebSocketTransport? fishAudioTransport;
-  final SpeechSynthesizer? remoteSynthesizer;
+  final DirectHttpSpeechSynthesizer? directHttpSpeech;
   OpenRouterVoiceOption voice;
-  bool _fishAudioUnavailable = false;
+
+  FishAudioLiveSpeechSynthesizer _nativeFish() {
+    final credential = fishAudioCredential?.trim();
+    final transport = fishAudioTransport;
+    if (credential == null || credential.isEmpty || transport == null) {
+      throw StateError('Fish Audio must be configured for speech.');
+    }
+    return FishAudioLiveSpeechSynthesizer(
+      apiKey: credential,
+      transport: transport,
+      model: voice.model,
+      voice: voice.voiceId,
+      latency: FishAudioLatency.low,
+      flushAfterCharacters: 48,
+    );
+  }
 
   @override
   Future<AudioTrack> synthesize(String text) {
-    if (remoteSynthesizer case final remote?) return remote.synthesize(text);
-    return _synthesizeWithOpenRouter(text);
+    if (directHttpSpeech case final direct?) return direct.synthesize(text);
+    return _nativeFish().synthesize(text);
   }
 
   @override
-  Future<StreamingSpeechSynthesis> synthesizeStream(
-    Stream<String> textDeltas,
-  ) async {
-    final credential = fishAudioCredential;
-    final transport = fishAudioTransport;
-    if (!_fishAudioUnavailable &&
-        credential != null &&
-        transport != null &&
-        voice.model.startsWith('fish-audio/')) {
-      try {
-        final bufferedText = StringBuffer();
-        final textCompleted = Completer<String>();
-        final bufferedDeltas = textDeltas.transform<String>(
-          StreamTransformer<String, String>.fromHandlers(
-            handleData: (delta, sink) {
-              bufferedText.write(delta);
-              sink.add(delta);
-            },
-            handleError: (error, stackTrace, sink) {
-              if (!textCompleted.isCompleted) {
-                textCompleted.completeError(error, stackTrace);
-              }
-              sink.addError(error, stackTrace);
-            },
-            handleDone: (sink) {
-              if (!textCompleted.isCompleted) {
-                textCompleted.complete(bufferedText.toString());
-              }
-              sink.close();
-            },
-          ),
-        );
-        final fishSynthesis = await FishAudioLiveSpeechSynthesizer(
-          apiKey: credential,
-          transport: transport,
-          model: 's2-pro',
-          voice: voice.voiceId,
-          latency: FishAudioLatency.low,
-          flushAfterCharacters: 48,
-        ).synthesizeStream(bufferedDeltas);
-        return _FishWithOpenRouterFallback(
-          fishSynthesis: fishSynthesis,
-          completedText: textCompleted.future,
-          synthesizeFallback: _synthesizeWithOpenRouter,
-          disableFishAudio: () => _fishAudioUnavailable = true,
-        );
-      } on FishAudioException {
-        // Avoid repeatedly paying connection latency after a credential,
-        // entitlement, relay, or provider failure in this runtime.
-        _fishAudioUnavailable = true;
-      }
-    }
-    return _BufferedOpenRouterSynthesis(
-      textDeltas: textDeltas,
-      synthesize: _synthesizeWithOpenRouter,
-    );
-  }
-
-  Future<AudioTrack> _synthesizeWithOpenRouter(String text) {
-    return OpenRouterSpeechSynthesizer.withVoice(
-      client: client,
-      voice: voice,
-    ).synthesize(text);
-  }
-}
-
-final class _FishWithOpenRouterFallback implements StreamingSpeechSynthesis {
-  _FishWithOpenRouterFallback({
-    required this.fishSynthesis,
-    required this.completedText,
-    required this.synthesizeFallback,
-    required this.disableFishAudio,
-  });
-
-  final StreamingSpeechSynthesis fishSynthesis;
-  final Future<String> completedText;
-  final Future<AudioTrack> Function(String text) synthesizeFallback;
-  final void Function() disableFishAudio;
-
-  @override
-  Future<AudioTrack> get completed async {
-    try {
-      return await fishSynthesis.completed;
-    } on FishAudioException {
-      disableFishAudio();
-      return synthesizeFallback(await completedText);
-    }
-  }
-
-  @override
-  Future<void> cancel() => fishSynthesis.cancel();
-}
-
-final class _BufferedOpenRouterSynthesis implements StreamingSpeechSynthesis {
-  _BufferedOpenRouterSynthesis({
-    required Stream<String> textDeltas,
-    required Future<AudioTrack> Function(String text) synthesize,
-  }) {
-    _subscription = textDeltas.listen(
-      _text.write,
-      onError: (Object error, StackTrace stackTrace) {
-        if (!_completed.isCompleted) {
-          _completed.completeError(error, stackTrace);
-        }
-      },
-      onDone: () async {
-        if (_completed.isCompleted) return;
-        try {
-          _completed.complete(await synthesize(_text.toString()));
-        } catch (error, stackTrace) {
-          _completed.completeError(error, stackTrace);
-        }
-      },
-      cancelOnError: true,
-    );
-  }
-
-  final StringBuffer _text = StringBuffer();
-  final Completer<AudioTrack> _completed = Completer<AudioTrack>();
-  late final StreamSubscription<String> _subscription;
-
-  @override
-  Future<AudioTrack> get completed => _completed.future;
-
-  @override
-  Future<void> cancel() async {
-    await _subscription.cancel();
-    if (!_completed.isCompleted) {
-      _completed.completeError(
-        StateError('Streaming speech synthesis was cancelled.'),
-      );
-    }
+  Future<StreamingSpeechSynthesis> synthesizeStream(Stream<String> textDeltas) {
+    return _nativeFish().synthesizeStream(textDeltas);
   }
 }
 
@@ -420,7 +317,11 @@ final class _NarratorSelection {
   void select(OpenRouterVoiceOption nextVoice) {
     final nextProfile = profiles[nextVoice.name];
     if (nextProfile == null) {
-      throw ArgumentError.value(nextVoice.name, 'voice', 'Missing narrator profile.');
+      throw ArgumentError.value(
+        nextVoice.name,
+        'voice',
+        'Missing narrator profile.',
+      );
     }
     voice = nextVoice;
     profile = nextProfile;

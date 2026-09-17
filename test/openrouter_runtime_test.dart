@@ -5,8 +5,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mcgee/capture_store.dart';
 import 'package:mcgee/narrator_profile.dart';
 import 'package:mcgee/openrouter_runtime.dart';
-import 'package:narration_engine/narration_engine.dart';
-import 'package:narration_engine/openrouter.dart';
+import 'package:mcgee/narration_engine.dart';
+import 'package:mcgee/openrouter.dart';
 
 void main() {
   test('rapid voice changes suppress captures until all stops finish and keep story', () async {

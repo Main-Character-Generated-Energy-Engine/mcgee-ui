@@ -1,11 +1,11 @@
-import 'package:narration_engine/fish_audio.dart';
+import 'package:mcgee/fish_audio.dart';
 
 FishAudioWebSocketTransport createFishAudioTransport() {
   throw UnsupportedError(
-    'Direct Fish Audio transport is unavailable in browsers. '
-    'Use the Netlify narration endpoint.',
+    'Browser WebSockets cannot set the Fish authorization header. '
+    'Use direct Fish HTTP speech instead.',
   );
 }
 
 String fishAudioTransportCredential(String? apiKey) =>
-    throw UnsupportedError('Fish Audio credentials must stay server-side.');
+    throw UnsupportedError('Browser Fish credentials use HTTP speech.');

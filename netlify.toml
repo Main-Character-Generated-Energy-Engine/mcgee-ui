@@ -1,11 +1,5 @@
 [build]
   publish = "build/web"
-  functions = "netlify/functions"
-
-[[redirects]]
-  from = "/api/narrate"
-  to = "/.netlify/functions/narrate"
-  status = 200
 
 [[redirects]]
   from = "/*"

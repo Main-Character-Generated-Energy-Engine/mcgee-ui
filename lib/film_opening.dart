@@ -1,8 +1,8 @@
 import 'dart:convert';
 
 import 'package:flutter/services.dart';
-import 'package:narration_engine/narration_engine.dart';
-import 'package:narration_engine/openai.dart';
+import 'package:mcgee/narration_engine.dart';
+import 'package:mcgee/openai.dart';
 
 import 'narrator_profile.dart';
 
