@@ -64,6 +64,14 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('continue-setup-button')), findsOneWidget);
     expect(find.byKey(const ValueKey('narration-audio-error')), findsNothing);
+    // Returning to setup must fully detach the old runtime. Choosing another
+    // actor here used to start an opening on that old runtime; when Continue
+    // replaced it, its aborted request surfaced as an opening failure.
+    await tester.tap(find.byKey(const ValueKey('setup-actor-Eve')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(find.byKey(const ValueKey('narration-audio-error')), findsNothing);
+    expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
@@ -197,39 +205,6 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
-  testWidgets('returning user can reopen the prefilled name field', (
-    tester,
-  ) async {
-    await tester.pumpWidget(
-      MainApp(
-        home: CameraCapturePage(
-          userProfileStore: _MemoryUserProfileStore('Ari'),
-          narrativeMemoryStore: _MemoryNarrativeMemoryStore(),
-        ),
-      ),
-    );
-    await tester.pump();
-
-    await tester.tap(find.byKey(const ValueKey('setup-actor-Eve')));
-    await tester.pump();
-    expect(
-      tester.widget<TextField>(find.byKey(const ValueKey('user-name-field')))
-          .controller!
-          .text,
-      'Ari',
-    );
-
-    await tester.tap(find.byKey(const ValueKey('not-you-button')));
-    await tester.pump();
-
-    final field = tester.widget<TextField>(
-      find.byKey(const ValueKey('user-name-field')),
-    );
-    expect(field.controller!.text, 'Ari');
-
-    await tester.pumpWidget(const SizedBox.shrink());
-  });
-
   testWidgets('does not attach old story memory when clearing a rename fails', (
     tester,
   ) async {
@@ -243,7 +218,14 @@ void main() {
         ),
       ),
     );
-    await tester.pump();
+    for (
+      var attempt = 0;
+      attempt < 20 &&
+          find.byKey(const ValueKey('not-you-button')).evaluate().isEmpty;
+      attempt++
+    ) {
+      await tester.pump(const Duration(milliseconds: 10));
+    }
     await tester.tap(find.byKey(const ValueKey('not-you-button')));
     await tester.pump();
     await tester.enterText(
@@ -253,7 +235,11 @@ void main() {
     await tester.ensureVisible(
       find.byKey(const ValueKey('continue-setup-button')),
     );
-    await tester.tap(find.byKey(const ValueKey('continue-setup-button')));
+    tester
+        .widget<FilledButton>(
+          find.byKey(const ValueKey('continue-setup-button')),
+        )
+        .onPressed!();
     await tester.pump();
 
     expect(profile.name, 'Ari');

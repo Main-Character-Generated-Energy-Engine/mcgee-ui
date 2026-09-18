@@ -478,11 +478,10 @@ class _CameraCapturePageState extends State<CameraCapturePage>
     final runtime = _narrationRuntime;
     if (!_startupLineRequested && runtime != null) {
       unawaited(_beginPreparedOpening(runtime, _cameraGeneration));
-    } else if (!_hasStartedNarrationAudio) {
-      _showOpeningAudioError(
-        'Opening narration was interrupted. Return to narration selection and try again.',
-      );
     } else {
+      // A completed episode retains its spoken memory. Its next session has
+      // no new opening to play; it resumes directly from the first camera
+      // frame, even though this session has not played audio yet.
       _revealCamera();
       _startCaptureLoop(captureImmediately: true);
     }
@@ -978,6 +977,8 @@ class _CameraCapturePageState extends State<CameraCapturePage>
     _captureTimer?.cancel();
     _creditsController.stop(canceled: true);
     final runtime = _narrationRuntime;
+    final audioOutput = _audioOutput;
+    final eventSubscription = _narrationEventSubscription;
     final controller = _controller;
     setState(() {
       _experienceStage = _ExperienceStage.setup;
@@ -992,12 +993,23 @@ class _CameraCapturePageState extends State<CameraCapturePage>
       _controller = null;
       _mockFrames = null;
       _captureStore = null;
+      // A new selection begins a new session. In particular, do not let an
+      // actor tap in setup prepare an opening on the just-ended runtime while
+      // the next Continue creates its replacement.
+      _narrationRuntime = null;
+      _audioOutput = null;
+      _narrationEventSubscription = null;
+      _openingPreparation = null;
+      _isNarrationPlaying = false;
+      _visibleNarrationPhrase = null;
     });
     unawaited(controller?.dispose());
     try {
-      await runtime?.stop();
+      await eventSubscription?.cancel();
+      await runtime?.close();
+      await audioOutput?.dispose();
     } catch (error, stackTrace) {
-      _printError('Stopping opening narration failed', error, stackTrace);
+      _printError('Ending narration session failed', error, stackTrace);
     } finally {
       _isReturningToSelection = false;
     }
