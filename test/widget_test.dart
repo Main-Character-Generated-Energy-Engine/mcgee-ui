@@ -89,11 +89,13 @@ void main() {
       findsNothing,
     );
     expect(find.byKey(const ValueKey('enable-camera-button')), findsNothing);
-    expect(
-      find.text('Ari’s story will be told by Morgan Freeman.'),
-      findsOneWidget,
-    );
     expect(find.byKey(const ValueKey('not-you-button')), findsOneWidget);
+    expect(
+      tester.widget<TextField>(find.byKey(const ValueKey('user-name-field')))
+          .controller!
+          .text,
+      'Ari',
+    );
     final morganAvatar = find.byKey(
       const ValueKey('setup-actor-Morgan Freeman'),
     );
@@ -129,7 +131,7 @@ void main() {
       // builds the runtime; allow those real filesystem futures to finish.
       await Future<void>.delayed(const Duration(milliseconds: 100));
     });
-    final consentHeading = find.text('Ari’s story is waiting.');
+    final consentHeading = find.text('Allow camera access');
     for (
       var attempt = 0;
       attempt < 20 && consentHeading.evaluate().isEmpty;
@@ -139,12 +141,8 @@ void main() {
     }
 
     expect(tester.takeException(), isNull);
-    expect(find.text('Ari’s story is waiting.'), findsOneWidget);
-    expect(
-      find.textContaining('Morgan Freeman has cleared their throat'),
-      findsOneWidget,
-    );
-    expect(find.byKey(const ValueKey('enable-camera-button')), findsOneWidget);
+    expect(find.text('Allow camera access'), findsOneWidget);
+    expect(find.byKey(const ValueKey('enable-camera-button')), findsNothing);
 
     await tester.pumpWidget(const SizedBox.shrink());
   });
@@ -182,7 +180,7 @@ void main() {
       await tester.testTextInput.receiveAction(TextInputAction.done);
       await Future<void>.delayed(const Duration(milliseconds: 100));
     });
-    final consentHeading = find.text('Sam’s story is waiting.');
+    final consentHeading = find.text('Allow camera access');
     for (
       var attempt = 0;
       attempt < 40 &&
@@ -214,7 +212,12 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('setup-actor-Eve')));
     await tester.pump();
-    expect(find.text('Ari’s story will be told by Eve.'), findsOneWidget);
+    expect(
+      tester.widget<TextField>(find.byKey(const ValueKey('user-name-field')))
+          .controller!
+          .text,
+      'Ari',
+    );
 
     await tester.tap(find.byKey(const ValueKey('not-you-button')));
     await tester.pump();

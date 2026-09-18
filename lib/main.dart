@@ -2,12 +2,14 @@ import 'dart:async';
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:camera/camera.dart';
-import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
+import 'package:flutter/foundation.dart'
+    show defaultTargetPlatform, kDebugMode, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:mcgee/narration_engine.dart';
 import 'package:mcgee/openrouter.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 import 'app_fonts.dart';
 import 'audio_output.dart';
@@ -70,7 +72,14 @@ class CameraCapturePage extends StatefulWidget {
   State<CameraCapturePage> createState() => _CameraCapturePageState();
 }
 
-enum _ExperienceStage { setup, cameraConsent, opening, live }
+enum _ExperienceStage {
+  setup,
+  cameraChecking,
+  cameraConsent,
+  cameraReady,
+  opening,
+  live,
+}
 
 class _CameraCapturePageState extends State<CameraCapturePage>
     with WidgetsBindingObserver, TickerProviderStateMixin {
@@ -98,6 +107,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
   String? _visibleNarrationPhrase;
   bool _isCapturing = false;
   bool _isInitializingCamera = false;
+  bool _cameraAccessDenied = false;
   bool _isAppActive = true;
   bool _isConnecting = false;
   bool _isReturningToSelection = false;
@@ -124,6 +134,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
   bool _isLoadingProfile = true;
   bool _isSavingProfile = false;
   bool _isEditingName = false;
+  bool _showWelcomeBack = false;
 
   static const _actors = <String, OpenRouterVoiceOption>{
     'Morgan Freeman': OpenRouterVoiceOption.morganFreeman,
@@ -280,6 +291,11 @@ class _CameraCapturePageState extends State<CameraCapturePage>
           _mockFrameIndex = 0;
           _captureStore = captureStore;
           _error = null;
+          if (_experienceStage == _ExperienceStage.cameraChecking ||
+              _experienceStage == _ExperienceStage.cameraConsent) {
+            _experienceStage = _ExperienceStage.cameraReady;
+            return;
+          }
           if (!_startupLineRequested) {
             _experienceStage = _ExperienceStage.opening;
             _creditsController.reset();
@@ -287,6 +303,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
             if (_filmOpening != null) _audioError = null;
           }
         });
+        if (_experienceStage == _ExperienceStage.cameraReady) return;
         _startCreditsIfReady();
         final runtime = _narrationRuntime;
         if (!_startupLineRequested && runtime != null) {
@@ -330,6 +347,11 @@ class _CameraCapturePageState extends State<CameraCapturePage>
         _controller = controller;
         _captureStore = captureStore;
         _error = null;
+        if (_experienceStage == _ExperienceStage.cameraChecking ||
+            _experienceStage == _ExperienceStage.cameraConsent) {
+          _experienceStage = _ExperienceStage.cameraReady;
+          return;
+        }
         if (!_startupLineRequested) {
           // CameraController.initialize completes only after camera access is
           // granted, so credits cannot appear during the permission prompt.
@@ -339,6 +361,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
           if (_filmOpening != null) _audioError = null;
         }
       });
+      if (_experienceStage == _ExperienceStage.cameraReady) return;
       _startCreditsIfReady();
       final runtime = _narrationRuntime;
       if (!_startupLineRequested && runtime != null) {
@@ -360,6 +383,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
         setState(() {
           _error = exception.description ?? exception.code;
           _experienceStage = _ExperienceStage.cameraConsent;
+          _cameraAccessDenied = true;
         });
       }
     } catch (exception, stackTrace) {
@@ -370,6 +394,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
         setState(() {
           _error = exception.toString();
           _experienceStage = _ExperienceStage.cameraConsent;
+          _cameraAccessDenied = true;
         });
       }
     } finally {
@@ -378,6 +403,88 @@ class _CameraCapturePageState extends State<CameraCapturePage>
       } else if (!mounted) {
         _isInitializingCamera = false;
       }
+    }
+  }
+
+  /// Reads the existing grant without causing a browser or system prompt.
+  /// Camera initialization is only automatic when the user has already
+  /// approved access; otherwise the consent view remains in control.
+  Future<void> _checkCameraPermission() async {
+    if (const bool.fromEnvironment('MOCK_CAMERA_FEED') ||
+        (!kIsWeb && defaultTargetPlatform == TargetPlatform.windows)) {
+      await _initializeCamera();
+      return;
+    }
+    try {
+      final status = await Permission.camera.status;
+      if (!mounted) return;
+      if (status.isGranted) {
+        await _initializeCamera();
+      } else {
+        setState(() => _experienceStage = _ExperienceStage.cameraConsent);
+        // Let the permission card paint before the browser/system prompt.
+        await Future<void>.delayed(Duration.zero);
+        if (!mounted || _experienceStage != _ExperienceStage.cameraConsent) {
+          return;
+        }
+        await _requestCameraAccess();
+      }
+    } catch (error, stackTrace) {
+      // Some desktop browsers do not expose the Permissions API. Keep the
+      // explicit button available rather than treating that as a denial.
+      _printError('Camera permission status check failed', error, stackTrace);
+      if (mounted && _experienceStage == _ExperienceStage.cameraChecking) {
+        setState(() => _experienceStage = _ExperienceStage.cameraConsent);
+      }
+    }
+  }
+
+  Future<void> _requestCameraAccess() async {
+    if (_isInitializingCamera) return;
+    if (const bool.fromEnvironment('MOCK_CAMERA_FEED') ||
+        (!kIsWeb && defaultTargetPlatform == TargetPlatform.windows)) {
+      await _initializeCamera();
+      return;
+    }
+    try {
+      final status = await Permission.camera.request();
+      if (!mounted) return;
+      if (status.isGranted) {
+        setState(() => _cameraAccessDenied = false);
+        await _initializeCamera();
+      } else {
+        setState(() {
+          _cameraAccessDenied = true;
+          _error = null;
+        });
+      }
+    } catch (error, stackTrace) {
+      _printError('Camera permission request failed', error, stackTrace);
+      if (mounted) {
+        setState(() => _cameraAccessDenied = true);
+      }
+    }
+  }
+
+  void _beginStory() {
+    if (_experienceStage != _ExperienceStage.cameraReady) return;
+    setState(() {
+      _experienceStage = _ExperienceStage.opening;
+      _creditsController.reset();
+      _showWaitingTitles = false;
+      if (_filmOpening != null) _audioError = null;
+    });
+    _startCreditsIfReady();
+    final runtime = _narrationRuntime;
+    if (!_startupLineRequested && runtime != null) {
+      unawaited(_beginPreparedOpening(runtime, _cameraGeneration));
+    } else if (!_hasStartedNarrationAudio) {
+      _showOpeningAudioError(
+        'Opening narration was interrupted. Return to narration selection and try again.',
+      );
+    } else {
+      _revealCamera();
+      _startCaptureLoop(captureImmediately: true);
     }
   }
 
@@ -594,7 +701,8 @@ class _CameraCapturePageState extends State<CameraCapturePage>
         _creditsController.reset();
         _showWaitingTitles = false;
         _titlesFadedAt = null;
-        _experienceStage = _ExperienceStage.cameraConsent;
+        _experienceStage = _ExperienceStage.cameraChecking;
+        _cameraAccessDenied = false;
       });
       String? loggedVoice;
       _narrationEventSubscription = runtime.events.listen((event) {
@@ -675,6 +783,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
       _openingPreparation = _startupLineRequested
           ? Future<PreparedFilmOpening?>.value()
           : _prepareOpening(runtime);
+      unawaited(_checkCameraPermission());
       await previousEventSubscription?.cancel();
       await previousRuntime?.close();
       await previousAudioOutput?.dispose();
@@ -872,6 +981,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
     final controller = _controller;
     setState(() {
       _experienceStage = _ExperienceStage.setup;
+      _showWelcomeBack = _userName != null;
       _audioError = null;
       _filmOpening = null;
       _openingPreparationFailure = null;
@@ -964,7 +1074,8 @@ class _CameraCapturePageState extends State<CameraCapturePage>
     } else if (state == AppLifecycleState.resumed) {
       _isAppActive = true;
       if ((_experienceStage == _ExperienceStage.live ||
-              _experienceStage == _ExperienceStage.opening) &&
+              _experienceStage == _ExperienceStage.opening ||
+              _experienceStage == _ExperienceStage.cameraReady) &&
           !_cameraReady) {
         unawaited(_initializeCamera());
       }
@@ -1004,7 +1115,9 @@ class _CameraCapturePageState extends State<CameraCapturePage>
     final isReady = _cameraReady;
     final isOnboarding =
         _experienceStage == _ExperienceStage.setup ||
-        _experienceStage == _ExperienceStage.cameraConsent;
+        _experienceStage == _ExperienceStage.cameraChecking ||
+        _experienceStage == _ExperienceStage.cameraConsent ||
+        _experienceStage == _ExperienceStage.cameraReady;
 
     return Scaffold(
       appBar: AppBar(toolbarHeight: 0),
@@ -1015,6 +1128,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
                 ? _buildOnboardingScreen()
                 : switch (_experienceStage) {
                     _ExperienceStage.opening => _buildOpeningScreen(),
+                    _ExperienceStage.cameraReady => _buildOnboardingScreen(),
                     _ExperienceStage.live => ColoredBox(
                       color: Colors.black,
                       child: SafeArea(
@@ -1100,7 +1214,9 @@ class _CameraCapturePageState extends State<CameraCapturePage>
   Widget _buildOnboardingScreen() {
     final content = switch (_experienceStage) {
       _ExperienceStage.setup => _buildSetupContent(),
+      _ExperienceStage.cameraChecking => _buildCameraCheckingContent(),
       _ExperienceStage.cameraConsent => _buildCameraConsentContent(),
+      _ExperienceStage.cameraReady => _buildBeginStoryContent(),
       _ => const SizedBox.shrink(),
     };
     return _buildOnboardingBackground(
@@ -1126,10 +1242,17 @@ class _CameraCapturePageState extends State<CameraCapturePage>
   }
 
   Widget _buildSetupContent() {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
+    return CallbackShortcuts(
+      bindings: <ShortcutActivator, VoidCallback>{
+        const SingleActivator(LogicalKeyboardKey.enter): _continueSetup,
+        const SingleActivator(LogicalKeyboardKey.numpadEnter): _continueSetup,
+      },
+      child: Focus(
+        autofocus: true,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
         Semantics(
           label: 'MCgEe',
           image: true,
@@ -1207,7 +1330,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
                   dimension: 18,
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
-              : const Icon(Icons.arrow_forward_rounded),
+              : const Icon(Icons.keyboard_return_rounded),
           label: Text(
             _isSavingProfile
                 ? 'Saving…'
@@ -1228,34 +1351,54 @@ class _CameraCapturePageState extends State<CameraCapturePage>
             child: const Text('Back to camera'),
           ),
         ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCameraCheckingContent() {
+    return const Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SizedBox.square(
+          dimension: 42,
+          child: CircularProgressIndicator(strokeWidth: 3),
+        ),
+        SizedBox(height: 22),
+        Text(
+          'Checking camera',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 34,
+            fontWeight: FontWeight.w700,
+            letterSpacing: -1,
+          ),
+        ),
       ],
     );
   }
 
   Widget _buildCameraConsentContent() {
-    return CallbackShortcuts(
-      bindings: <ShortcutActivator, VoidCallback>{
-        const SingleActivator(LogicalKeyboardKey.enter): _initializeCamera,
-        const SingleActivator(LogicalKeyboardKey.numpadEnter):
-            _initializeCamera,
-      },
-      child: Focus(
-        autofocus: true,
-        child: Column(
+    return Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const Icon(
-              Icons.auto_awesome_rounded,
+            Icon(
+              _cameraAccessDenied
+                  ? Icons.sentiment_dissatisfied_rounded
+                  : Icons.videocam_rounded,
               color: Colors.white,
               size: 54,
             ),
             const SizedBox(height: 22),
             Text(
-              '${_userName ?? 'Your'}${_userName == null ? '' : '’s'} '
-              'story is waiting.',
+              _cameraAccessDenied
+                  ? 'We can’t see the scene.'
+                  : 'Allow camera access',
               textAlign: TextAlign.center,
-              style: TextStyle(
+              style: const TextStyle(
                 color: Colors.white,
                 fontSize: 34,
                 fontWeight: FontWeight.w700,
@@ -1264,20 +1407,9 @@ class _CameraCapturePageState extends State<CameraCapturePage>
             ),
             const SizedBox(height: 14),
             Text(
-              'The lights are ready. $_selectedActor has '
-              'cleared their throat. All that remains is for '
-              '${_userName ?? 'you'} to step into frame.',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.76),
-                fontSize: 17,
-                height: 1.45,
-              ),
-            ),
-            const SizedBox(height: 14),
-            Text(
-              'Allow camera access while this tab is open, and let the ordinary '
-              'receive the gravitas it deserves.',
+              _cameraAccessDenied
+                  ? 'Without a camera view, there’s no story to follow. You can try again when you’re ready.'
+                  : 'Allow camera access to continue.',
               textAlign: TextAlign.center,
               style: TextStyle(
                 color: Colors.white.withValues(alpha: 0.76),
@@ -1293,30 +1425,49 @@ class _CameraCapturePageState extends State<CameraCapturePage>
                 style: const TextStyle(color: Color(0xffffa9a9)),
               ),
             ],
-            const SizedBox(height: 28),
-            FilledButton.icon(
-              key: const ValueKey('enable-camera-button'),
-              onPressed: _isInitializingCamera ? null : _initializeCamera,
-              icon: _isInitializingCamera
-                  ? const SizedBox.square(
-                      dimension: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.videocam_rounded),
-              label: Text(
-                _isInitializingCamera
-                    ? 'Summoning the camera…'
-                    : 'Give me main character energy',
+          ],
+    );
+  }
+
+  Widget _buildBeginStoryContent() {
+    return CallbackShortcuts(
+      bindings: <ShortcutActivator, VoidCallback>{
+        const SingleActivator(LogicalKeyboardKey.enter): _beginStory,
+        const SingleActivator(LogicalKeyboardKey.numpadEnter): _beginStory,
+      },
+      child: Focus(
+        autofocus: true,
+        onKeyEvent: (_, event) {
+          if (event is KeyDownEvent &&
+              (event.logicalKey == LogicalKeyboardKey.enter ||
+                  event.logicalKey == LogicalKeyboardKey.numpadEnter)) {
+            _beginStory();
+            return KeyEventResult.handled;
+          }
+          return KeyEventResult.ignored;
+        },
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Icon(Icons.auto_awesome_rounded, color: Colors.white, size: 54),
+            const SizedBox(height: 22),
+            const Text(
+              'Ready to begin?',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 34,
+                fontWeight: FontWeight.w700,
+                letterSpacing: -1,
               ),
             ),
-            const SizedBox(height: 8),
-            TextButton(
-              onPressed: _isInitializingCamera
-                  ? null
-                  : () {
-                      setState(() => _experienceStage = _ExperienceStage.setup);
-                    },
-              child: const Text('Change narrator or language'),
+            const SizedBox(height: 28),
+            FilledButton.icon(
+              key: const ValueKey('begin-story-button'),
+              onPressed: _beginStory,
+              icon: const Icon(Icons.keyboard_return_rounded),
+              label: const Text('Begin story'),
             ),
           ],
         ),
@@ -1370,20 +1521,18 @@ class _CameraCapturePageState extends State<CameraCapturePage>
         ),
       );
     }
-    final name = _userName;
-    if (!_isEditingName && name != null) {
-      return Column(
-        mainAxisSize: MainAxisSize.min,
+    if (_showWelcomeBack && !_isEditingName && _userName != null) {
+      final name = _userName!;
+      return Row(
         children: [
-          Text(
-            '$name’s story will be told by $_selectedActor.',
-            key: const ValueKey('saved-protagonist-message'),
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 17,
-              height: 1.4,
-              fontWeight: FontWeight.w600,
+          Expanded(
+            child: Text(
+              'Welcome back, $name.',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 17,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
           TextButton(
@@ -1392,12 +1541,11 @@ class _CameraCapturePageState extends State<CameraCapturePage>
                 ? null
                 : () {
                     setState(() {
+                      _showWelcomeBack = false;
+                      _userName = null;
+                      _nameController.clear();
                       _isEditingName = true;
                       _nameError = null;
-                      _nameController.selection = TextSelection(
-                        baseOffset: 0,
-                        extentOffset: _nameController.text.length,
-                      );
                     });
                   },
             child: const Text('Not you?'),
@@ -1405,24 +1553,48 @@ class _CameraCapturePageState extends State<CameraCapturePage>
         ],
       );
     }
-    return TextField(
-      key: const ValueKey('user-name-field'),
-      controller: _nameController,
-      autofocus: name == null,
-      enabled: !_isSavingProfile,
-      textCapitalization: TextCapitalization.words,
-      textInputAction: TextInputAction.done,
-      maxLength: 60,
-      onChanged: (_) {
-        if (_nameError != null) setState(() => _nameError = null);
-      },
-      onSubmitted: (_) => _continueSetup(),
-      decoration: InputDecoration(
-        labelText: 'What should the narrator call you?',
-        helperText: 'This name will be used in the narrated story.',
-        errorText: _nameError,
-        prefixIcon: const Icon(Icons.person_outline_rounded),
-      ),
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: TextField(
+          key: const ValueKey('user-name-field'),
+          controller: _nameController,
+          autofocus: _userName == null,
+          enabled: !_isSavingProfile,
+          textCapitalization: TextCapitalization.words,
+          textInputAction: TextInputAction.done,
+          maxLength: 60,
+          onChanged: (_) {
+            setState(() {
+              _isEditingName = true;
+              _nameError = null;
+            });
+          },
+          onSubmitted: (_) => _continueSetup(),
+          decoration: InputDecoration(
+            labelText: 'What is your name?',
+            errorText: _nameError,
+            prefixIcon: const Icon(Icons.person_outline_rounded),
+          ),
+          ),
+        ),
+        TextButton(
+          key: const ValueKey('not-you-button'),
+          onPressed: _isSavingProfile
+              ? null
+              : () {
+                  setState(() {
+                    _showWelcomeBack = false;
+                    _userName = null;
+                    _nameController.clear();
+                    _isEditingName = true;
+                    _nameError = null;
+                  });
+                },
+          child: const Text('Not you?'),
+        ),
+      ],
     );
   }
 
@@ -1438,10 +1610,19 @@ class _CameraCapturePageState extends State<CameraCapturePage>
             button: true,
             selected: _selectedActor == entry.key,
             label: 'Choose ${entry.key} as narrator',
-            child: InkWell(
-              onTap: () => _selectActor(entry.key),
-              borderRadius: BorderRadius.circular(50),
-              child: SizedBox(
+            child: FocusableActionDetector(
+              actions: <Type, Action<Intent>>{
+                ActivateIntent: CallbackAction<ActivateIntent>(
+                  onInvoke: (_) {
+                    _selectActor(entry.key);
+                    return null;
+                  },
+                ),
+              },
+              child: InkWell(
+                onTap: () => _selectActor(entry.key),
+                borderRadius: BorderRadius.circular(50),
+                child: SizedBox(
                 width: 104,
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -1483,6 +1664,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
                       ),
                     ),
                   ],
+                ),
                 ),
               ),
             ),
@@ -1745,47 +1927,11 @@ class _CameraCapturePageState extends State<CameraCapturePage>
     );
   }
 
-  Widget _buildActorSelector() {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final avatarSize = constraints.maxWidth < 150 ? 34.0 : 48.0;
-        return Row(
-          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            for (final actor in _actors.keys)
-              Semantics(
-                button: true,
-                selected: _selectedActor == actor,
-                label: 'Choose $actor as narrator',
-                child: InkWell(
-                  onTap: () => _selectActor(actor),
-                  borderRadius: BorderRadius.circular(100),
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 180),
-                    padding: const EdgeInsets.all(3),
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                        color: _selectedActor == actor
-                            ? Colors.white
-                            : Colors.white30,
-                        width: _selectedActor == actor ? 3 : 1,
-                      ),
-                    ),
-                    child: CircleAvatar(
-                      radius: avatarSize / 2,
-                      backgroundColor: const Color(0xff343c39),
-                      backgroundImage: AssetImage(_actorAvatars[actor]!),
-                    ),
-                  ),
-                ),
-              ),
-          ],
-        );
-      },
-    );
-  }
+  String get _endExperienceLabel => switch (_selectedActor) {
+    'David Attenborough' => 'End documentary',
+    'Eve' => 'End news cycle',
+    _ => 'End story',
+  };
 
   Widget _buildTvControls() {
     return LayoutBuilder(
@@ -1794,7 +1940,29 @@ class _CameraCapturePageState extends State<CameraCapturePage>
         final buttonWidth = compact ? constraints.maxWidth * 0.22 : 18.0;
         return Column(
           children: [
-            Expanded(flex: 3, child: _buildActorSelector()),
+            Expanded(
+              flex: 3,
+              child: Center(
+                child: Tooltip(
+                  message: _endExperienceLabel,
+                  child: FilledButton(
+                    key: const ValueKey('end-experience-button'),
+                    onPressed: _returnToNarrationSelection,
+                    style: FilledButton.styleFrom(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: compact ? 4 : 8,
+                        vertical: compact ? 8 : 12,
+                      ),
+                      textStyle: TextStyle(fontSize: compact ? 9 : 12),
+                    ),
+                    child: Text(
+                      _endExperienceLabel,
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                ),
+              ),
+            ),
             SizedBox(height: compact ? 6 : 12),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
