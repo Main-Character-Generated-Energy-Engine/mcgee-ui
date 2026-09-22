@@ -76,7 +76,6 @@ enum _ExperienceStage {
   setup,
   cameraChecking,
   cameraConsent,
-  cameraReady,
   opening,
   live,
 }
@@ -200,6 +199,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
         _nameController.text = name ?? '';
         _episodeMemory = memory;
         _isEditingName = name == null;
+        _showWelcomeBack = name != null;
         _isLoadingProfile = false;
       });
     } catch (error, stackTrace) {
@@ -293,7 +293,10 @@ class _CameraCapturePageState extends State<CameraCapturePage>
           _error = null;
           if (_experienceStage == _ExperienceStage.cameraChecking ||
               _experienceStage == _ExperienceStage.cameraConsent) {
-            _experienceStage = _ExperienceStage.cameraReady;
+            _experienceStage = _ExperienceStage.opening;
+            _creditsController.reset();
+            _showWaitingTitles = false;
+            if (_filmOpening != null) _audioError = null;
             return;
           }
           if (!_startupLineRequested) {
@@ -303,16 +306,10 @@ class _CameraCapturePageState extends State<CameraCapturePage>
             if (_filmOpening != null) _audioError = null;
           }
         });
-        if (_experienceStage == _ExperienceStage.cameraReady) return;
         _startCreditsIfReady();
         final runtime = _narrationRuntime;
         if (!_startupLineRequested && runtime != null) {
           unawaited(_beginPreparedOpening(runtime, generation));
-        } else if (_experienceStage == _ExperienceStage.opening &&
-            !_hasStartedNarrationAudio) {
-          _showOpeningAudioError(
-            'Opening narration was interrupted. Return to narration selection and try again.',
-          );
         } else {
           _revealCamera();
           _startCaptureLoop(captureImmediately: true);
@@ -349,7 +346,10 @@ class _CameraCapturePageState extends State<CameraCapturePage>
         _error = null;
         if (_experienceStage == _ExperienceStage.cameraChecking ||
             _experienceStage == _ExperienceStage.cameraConsent) {
-          _experienceStage = _ExperienceStage.cameraReady;
+          _experienceStage = _ExperienceStage.opening;
+          _creditsController.reset();
+          _showWaitingTitles = false;
+          if (_filmOpening != null) _audioError = null;
           return;
         }
         if (!_startupLineRequested) {
@@ -361,16 +361,10 @@ class _CameraCapturePageState extends State<CameraCapturePage>
           if (_filmOpening != null) _audioError = null;
         }
       });
-      if (_experienceStage == _ExperienceStage.cameraReady) return;
       _startCreditsIfReady();
       final runtime = _narrationRuntime;
       if (!_startupLineRequested && runtime != null) {
         unawaited(_beginPreparedOpening(runtime, generation));
-      } else if (_experienceStage == _ExperienceStage.opening &&
-          !_hasStartedNarrationAudio) {
-        _showOpeningAudioError(
-          'Opening narration was interrupted. Return to narration selection and try again.',
-        );
       } else {
         _revealCamera();
         _startCaptureLoop(captureImmediately: true);
@@ -463,27 +457,6 @@ class _CameraCapturePageState extends State<CameraCapturePage>
       if (mounted) {
         setState(() => _cameraAccessDenied = true);
       }
-    }
-  }
-
-  void _beginStory() {
-    if (_experienceStage != _ExperienceStage.cameraReady) return;
-    setState(() {
-      _experienceStage = _ExperienceStage.opening;
-      _creditsController.reset();
-      _showWaitingTitles = false;
-      if (_filmOpening != null) _audioError = null;
-    });
-    _startCreditsIfReady();
-    final runtime = _narrationRuntime;
-    if (!_startupLineRequested && runtime != null) {
-      unawaited(_beginPreparedOpening(runtime, _cameraGeneration));
-    } else {
-      // A completed episode retains its spoken memory. Its next session has
-      // no new opening to play; it resumes directly from the first camera
-      // frame, even though this session has not played audio yet.
-      _revealCamera();
-      _startCaptureLoop(captureImmediately: true);
     }
   }
 
@@ -899,7 +872,19 @@ class _CameraCapturePageState extends State<CameraCapturePage>
         openingPlayback.then((_) => false),
       ]);
       await openingSubscription.cancel();
-      if (!audioStarted && !openingStarted.isCompleted) return;
+      if (!audioStarted && !openingStarted.isCompleted) {
+        // A playback failure used to leave the opening on black until the
+        // slow-start timer expired. This is most visible when changing voice:
+        // surface the failure now instead of silently skipping that narrator's
+        // opening.
+        if (isOpening()) {
+          _showOpeningAudioError(
+            _openingPreparationFailure ??
+                'Opening narration could not play. Return to narration selection and try again.',
+          );
+        }
+        return;
+      }
       _cancelOpeningWait();
       await Future<void>.delayed(const Duration(seconds: 1));
     } else {
@@ -1086,8 +1071,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
     } else if (state == AppLifecycleState.resumed) {
       _isAppActive = true;
       if ((_experienceStage == _ExperienceStage.live ||
-              _experienceStage == _ExperienceStage.opening ||
-              _experienceStage == _ExperienceStage.cameraReady) &&
+              _experienceStage == _ExperienceStage.opening) &&
           !_cameraReady) {
         unawaited(_initializeCamera());
       }
@@ -1128,8 +1112,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
     final isOnboarding =
         _experienceStage == _ExperienceStage.setup ||
         _experienceStage == _ExperienceStage.cameraChecking ||
-        _experienceStage == _ExperienceStage.cameraConsent ||
-        _experienceStage == _ExperienceStage.cameraReady;
+        _experienceStage == _ExperienceStage.cameraConsent;
 
     return Scaffold(
       appBar: AppBar(toolbarHeight: 0),
@@ -1140,7 +1123,6 @@ class _CameraCapturePageState extends State<CameraCapturePage>
                 ? _buildOnboardingScreen()
                 : switch (_experienceStage) {
                     _ExperienceStage.opening => _buildOpeningScreen(),
-                    _ExperienceStage.cameraReady => _buildOnboardingScreen(),
                     _ExperienceStage.live => ColoredBox(
                       color: Colors.black,
                       child: SafeArea(
@@ -1228,7 +1210,6 @@ class _CameraCapturePageState extends State<CameraCapturePage>
       _ExperienceStage.setup => _buildSetupContent(),
       _ExperienceStage.cameraChecking => _buildCameraCheckingContent(),
       _ExperienceStage.cameraConsent => _buildCameraConsentContent(),
-      _ExperienceStage.cameraReady => _buildBeginStoryContent(),
       _ => const SizedBox.shrink(),
     };
     return _buildOnboardingBackground(
@@ -1438,52 +1419,6 @@ class _CameraCapturePageState extends State<CameraCapturePage>
               ),
             ],
           ],
-    );
-  }
-
-  Widget _buildBeginStoryContent() {
-    return CallbackShortcuts(
-      bindings: <ShortcutActivator, VoidCallback>{
-        const SingleActivator(LogicalKeyboardKey.enter): _beginStory,
-        const SingleActivator(LogicalKeyboardKey.numpadEnter): _beginStory,
-      },
-      child: Focus(
-        autofocus: true,
-        onKeyEvent: (_, event) {
-          if (event is KeyDownEvent &&
-              (event.logicalKey == LogicalKeyboardKey.enter ||
-                  event.logicalKey == LogicalKeyboardKey.numpadEnter)) {
-            _beginStory();
-            return KeyEventResult.handled;
-          }
-          return KeyEventResult.ignored;
-        },
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const Icon(Icons.auto_awesome_rounded, color: Colors.white, size: 54),
-            const SizedBox(height: 22),
-            const Text(
-              'Ready to begin?',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 34,
-                fontWeight: FontWeight.w700,
-                letterSpacing: -1,
-              ),
-            ),
-            const SizedBox(height: 28),
-            FilledButton.icon(
-              key: const ValueKey('begin-story-button'),
-              onPressed: _beginStory,
-              icon: const Icon(Icons.keyboard_return_rounded),
-              label: const Text('Begin story'),
-            ),
-          ],
-        ),
-      ),
     );
   }
 

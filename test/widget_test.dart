@@ -89,7 +89,6 @@ void main() {
     );
     await tester.pump();
 
-    expect(find.bySemanticsLabel('MCgEe'), findsOneWidget);
     expect(
       find.text(
         'Morgan Freeman is ready. A different voice may audition below.',
@@ -98,12 +97,8 @@ void main() {
     );
     expect(find.byKey(const ValueKey('enable-camera-button')), findsNothing);
     expect(find.byKey(const ValueKey('not-you-button')), findsOneWidget);
-    expect(
-      tester.widget<TextField>(find.byKey(const ValueKey('user-name-field')))
-          .controller!
-          .text,
-      'Ari',
-    );
+    expect(find.text('Welcome back, Ari.'), findsOneWidget);
+    expect(find.byKey(const ValueKey('user-name-field')), findsNothing);
     final morganAvatar = find.byKey(
       const ValueKey('setup-actor-Morgan Freeman'),
     );
