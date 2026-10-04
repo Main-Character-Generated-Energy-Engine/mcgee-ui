@@ -65,11 +65,16 @@ final class NarrativeMemorySnapshot {
     this.recentNarrations = const <NarrationMemoryEntry>[],
     this.canon = const <String, String>{},
     this.storySummary = '',
+    this.spokenNarrationCount = 0,
   });
 
   final List<SceneObservation> recentObservations;
   final List<NarrationMemoryEntry> recentNarrations;
   final Map<String, String> canon;
+
+  /// Passages committed since the latest host opening, including that opening.
+  /// Unlike recent history, this arc count survives transcript trimming.
+  final int spokenNarrationCount;
 
   /// Bounded recap of spoken beats older than [recentNarrations].
   final String storySummary;

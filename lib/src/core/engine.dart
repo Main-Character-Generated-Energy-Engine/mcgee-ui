@@ -466,6 +466,7 @@ final class NarrationEngine {
           observedAt: narration.observedAt,
           motifs: narration.motifs,
           canonUpdates: narration.canonUpdates,
+          startsEpisode: narration.captures.isEmpty,
         );
         // The line is now part of the canonical spoken story. A coalesced
         // frame may safely use it as the immediate predecessor.

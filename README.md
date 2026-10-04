@@ -47,6 +47,36 @@ This mode is enabled only by launcher supplied Dart defines.
 Set `MOCK_FISH_DELAY_MS=30000` when running `npm run dev:e2e` to exercise the
 five-second opening warning and late audio recovery.
 
+## Narration quality evaluation
+
+Run `dart run scripts/eval_narration.dart` from the repository root with the
+local OpenRouter key configured as above. This uses the real text provider
+and incurs provider usage; it does not request speech. Optional arguments
+`morgan-freeman`, `david-attenborough`, or `jade` select a single narrator.
+
+By default, the evaluation generates an opening and thirteen passages using
+one unchanged image with no handheld object. Fixtures are test inputs only;
+production prompts contain no fixture-derived objects or physical attributes.
+Use `--scenario=stale-object` to seed deliberately wrong object-based history,
+or `--scenario=object-exits` to show an object once and then remove it.
+Use `--scenario=stale-drive` with David to check migration from an old feeding
+thread to the current courtship arc. Use `--scenario=stale-strategy` to
+check that a resolved, repetitive action is retired when the next arc starts. Use
+`--passages=6` for a single arc. These cases check that current visual evidence
+overrides saved claims, while the underlying narrative can continue.
+
+Text and canon updates are saved in ignored `.dart_tool/narration-eval.json`
+for manual review. The evaluator records requested arc stages and flags stage
+mismatches and possible unsupported object references. Each six-passage episode
+should make its goal, tactic, snag, response, choice, and limited payoff audible.
+David develops scene-supported reproductive strategies. Each new arc must
+move beyond the recently resolved tactics; refining the same action counts as
+repetition. Story state retains the last three resolved strategies. Biological labels
+should stay occasional; older saved drives are replaced by reproduction.
+Physical outcomes require current visual evidence. Review repetition, sentence
+structure, and contrastive negation. The mock browser flow verifies integration
+separately; it does not evaluate prose quality.
+
 ## Audio and latency
 
 The web relay forwards Fish's response body as it arrives. The browser appends

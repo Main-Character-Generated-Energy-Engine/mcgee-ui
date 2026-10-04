@@ -44,6 +44,9 @@ final class NarrativeMemory {
         memory._canon.remove(memory._canon.keys.first);
       }
     }
+    if (snapshot.spokenNarrationCount > 0) {
+      memory._spokenNarrationCount = snapshot.spokenNarrationCount;
+    }
     return memory;
   }
 
@@ -56,12 +59,14 @@ final class NarrativeMemory {
   final List<NarrationMemoryEntry> _narrations = <NarrationMemoryEntry>[];
   final Map<String, String> _canon = <String, String>{};
   final List<String> _storySummaryBeats = <String>[];
+  int _spokenNarrationCount = 0;
 
   NarrativeMemorySnapshot get snapshot => NarrativeMemorySnapshot(
     recentObservations: List<SceneObservation>.unmodifiable(_observations),
     recentNarrations: List<NarrationMemoryEntry>.unmodifiable(_narrations),
     canon: Map<String, String>.unmodifiable(_canon),
     storySummary: _storySummaryBeats.join(' '),
+    spokenNarrationCount: _spokenNarrationCount,
   );
 
   void recordObservation(SceneObservation observation) {
@@ -74,7 +79,9 @@ final class NarrativeMemory {
     required DateTime observedAt,
     List<String> motifs = const <String>[],
     Map<String, String> canonUpdates = const <String, String>{},
+    bool startsEpisode = false,
   }) {
+    _spokenNarrationCount = startsEpisode ? 1 : _spokenNarrationCount + 1;
     _narrations.add(
       NarrationMemoryEntry(
         text: text,
@@ -100,6 +107,7 @@ final class NarrativeMemory {
     _narrations.clear();
     _canon.clear();
     _storySummaryBeats.clear();
+    _spokenNarrationCount = 0;
   }
 
   void _appendSummaryBeat(String text) {

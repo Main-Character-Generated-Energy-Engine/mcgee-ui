@@ -13,11 +13,13 @@ import 'package:permission_handler/permission_handler.dart';
 
 import 'app_fonts.dart';
 import 'audio_output.dart';
+import 'background_music.dart';
 import 'capture_store.dart';
 import 'film_opening.dart';
 import 'film_opening_credits.dart';
 import 'fish_audio_key_loader.dart';
 import 'fish_audio_transport.dart';
+import 'narration_frame.dart';
 import 'narrative_memory_store.dart';
 import 'narrator_profile.dart';
 import 'openrouter_key_loader.dart';
@@ -123,6 +125,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
   String _selectedActor = 'Morgan Freeman';
   NarrationLanguage _selectedLanguage = NarrationLanguage.english;
   AudioPlayer? _switchSoundPlayer;
+  final BackgroundMusic _music = createBackgroundMusic();
   Uint8List? _switchSoundBytes;
   late final UserProfileStore _userProfileStore;
   late final NarrativeMemoryStore _narrativeMemoryStore;
@@ -139,6 +142,13 @@ class _CameraCapturePageState extends State<CameraCapturePage>
     'Morgan Freeman': OpenRouterVoiceOption.morganFreeman,
     'David Attenborough': OpenRouterVoiceOption.davidAttenborough,
     'Eve': OpenRouterVoiceOption.jade,
+  };
+
+  // Kevin MacLeod (incompetech.com), CC BY 4.0; credited on the setup screen.
+  static const _actorMusic = <String, String>{
+    'Morgan Freeman': 'lib/assets/music/danse-morialta.mp3',
+    'David Attenborough': 'lib/assets/music/investigations.mp3',
+    'Eve': 'lib/assets/music/stay-the-course.mp3',
   };
 
   static const _actorAvatars = <String, String>{
@@ -230,6 +240,10 @@ class _CameraCapturePageState extends State<CameraCapturePage>
       setState(() => _nameError = error.message);
       return;
     }
+    // Still inside the Continue tap, so browsers allow audio to start later.
+    _music
+      ..unlock()
+      ..load(_actorMusic[_selectedActor]!);
 
     setState(() {
       _isSavingProfile = true;
@@ -734,6 +748,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
             soundRecovered ||
             (visiblePhrase != null &&
                 visiblePhrase != _visibleNarrationPhrase)) {
+          if (_isNarrationPlaying != isPlaying) _music.duck(isPlaying);
           setState(() {
             _isNarrationPlaying = isPlaying;
             if (event is NarrationStarted) {
@@ -824,6 +839,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
         !_creditsController.isAnimating &&
         !_creditsController.isCompleted) {
       _creditsController.forward();
+      _music.play();
     }
   }
 
@@ -961,6 +977,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
     _cancelOpeningWait();
     _captureTimer?.cancel();
     _creditsController.stop(canceled: true);
+    _music.stop();
     final runtime = _narrationRuntime;
     final audioOutput = _audioOutput;
     final eventSubscription = _narrationEventSubscription;
@@ -1002,6 +1019,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
   }
 
   void _revealCamera() {
+    _music.play();
     setState(() => _experienceStage = _ExperienceStage.live);
     _entryController.forward(from: 0);
   }
@@ -1068,6 +1086,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
       }
       unawaited(controller?.dispose());
       unawaited(_narrationRuntime?.stop());
+      _music.stop();
     } else if (state == AppLifecycleState.resumed) {
       _isAppActive = true;
       if ((_experienceStage == _ExperienceStage.live ||
@@ -1075,6 +1094,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
           !_cameraReady) {
         unawaited(_initializeCamera());
       }
+      if (_experienceStage == _ExperienceStage.live) _music.play();
     }
   }
 
@@ -1090,6 +1110,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
     _nameController.dispose();
     unawaited(_narrationEventSubscription?.cancel());
     unawaited(_switchSoundPlayer?.dispose());
+    unawaited(_music.dispose());
     _controller?.dispose();
     final narrationRuntime = _narrationRuntime;
     final audioOutput = _audioOutput;
@@ -1344,6 +1365,14 @@ class _CameraCapturePageState extends State<CameraCapturePage>
             child: const Text('Back to camera'),
           ),
         ],
+        const SizedBox(height: 20),
+        const Text(
+          'Music: “Danse Morialta”, “Investigations”, “Stay the Course” '
+          'by Kevin MacLeod (incompetech.com), CC BY 4.0',
+          key: ValueKey('music-credits'),
+          textAlign: TextAlign.center,
+          style: TextStyle(color: Colors.white38, fontSize: 11),
+        ),
           ],
         ),
       ),
@@ -1526,21 +1555,23 @@ class _CameraCapturePageState extends State<CameraCapturePage>
           ),
           ),
         ),
-        TextButton(
-          key: const ValueKey('not-you-button'),
-          onPressed: _isSavingProfile
-              ? null
-              : () {
-                  setState(() {
-                    _showWelcomeBack = false;
-                    _userName = null;
-                    _nameController.clear();
-                    _isEditingName = true;
-                    _nameError = null;
-                  });
-                },
-          child: const Text('Not you?'),
-        ),
+        // Only offer to forget a name that was actually saved.
+        if (_userName != null)
+          TextButton(
+            key: const ValueKey('not-you-button'),
+            onPressed: _isSavingProfile
+                ? null
+                : () {
+                    setState(() {
+                      _showWelcomeBack = false;
+                      _userName = null;
+                      _nameController.clear();
+                      _isEditingName = true;
+                      _nameError = null;
+                    });
+                  },
+            child: const Text('Not you?'),
+          ),
       ],
     );
   }
@@ -1632,100 +1663,52 @@ class _CameraCapturePageState extends State<CameraCapturePage>
   }
 
   Widget _buildPreview(CameraController? controller, bool isReady) {
+    final Widget feed;
     if (_error != null) {
-      return _buildTelevision(
-        Center(
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Text(
-              'Camera unavailable\n$_error',
-              textAlign: TextAlign.center,
-            ),
+      feed = Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Text(
+            'Camera unavailable\n$_error',
+            textAlign: TextAlign.center,
           ),
         ),
       );
-    }
-    if (_mockFrames case final frames? when frames.isNotEmpty) {
-      return _buildTelevision(
-        Stack(
-          fit: StackFit.expand,
-          children: [
-            Image.memory(
-              frames[(_mockFrameIndex == 0 ? 0 : _mockFrameIndex - 1) %
-                  frames.length],
-              fit: BoxFit.cover,
-              gaplessPlayback: true,
+    } else if (_mockFrames case final frames? when frames.isNotEmpty) {
+      feed = Image.memory(
+        frames[(_mockFrameIndex == 0 ? 0 : _mockFrameIndex - 1) %
+            frames.length],
+        fit: BoxFit.cover,
+        gaplessPlayback: true,
+      );
+    } else if (!isReady || controller == null) {
+      feed = const Center(child: CircularProgressIndicator());
+    } else {
+      feed = LayoutBuilder(
+        builder: (context, constraints) {
+          final previewHeight =
+              constraints.maxWidth / controller.value.aspectRatio;
+          return FittedBox(
+            fit: BoxFit.cover,
+            clipBehavior: Clip.hardEdge,
+            child: SizedBox(
+              width: constraints.maxWidth,
+              height: previewHeight,
+              child: CameraPreview(controller),
             ),
-            IgnorePointer(child: CustomPaint(painter: _OldTvEffectPainter())),
-          ],
-        ),
+          );
+        },
       );
     }
-    if (!isReady || controller == null) {
-      return _buildTelevision(const Center(child: CircularProgressIndicator()));
-    }
-    return _buildTelevision(
-      Stack(
-        fit: StackFit.expand,
-        children: [
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final previewHeight =
-                  constraints.maxWidth / controller.value.aspectRatio;
-              return FittedBox(
-                fit: BoxFit.cover,
-                clipBehavior: Clip.hardEdge,
-                child: SizedBox(
-                  width: constraints.maxWidth,
-                  height: previewHeight,
-                  child: CameraPreview(controller),
-                ),
-              );
-            },
-          ),
-          IgnorePointer(child: CustomPaint(painter: _OldTvEffectPainter())),
-          Positioned(
-            right: 18,
-            bottom: 6,
-            child: IgnorePointer(
-              child: Opacity(
-                opacity: 0.72,
-                child: SizedBox(
-                  width: 140,
-                  height: 140,
-                  child: SvgPicture.asset(
-                    'lib/assets/MCgEe.svg',
-                    fit: BoxFit.contain,
-                  ),
-                ),
-              ),
-            ),
-          ),
-          if (_visibleNarrationPhrase case final narration?)
-            Positioned(
-              left: 20,
-              right: 20,
-              bottom: 18,
-              child: AnimatedOpacity(
-                opacity: _isNarrationPlaying ? 1 : 0,
-                duration: const Duration(milliseconds: 500),
-                curve: Curves.easeOut,
-                child: Text(
-                  narration,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    fontFamily: AppFonts.dialogFamily,
-                    color: Colors.white,
-                    fontSize: 16,
-                    shadows: <Shadow>[
-                      Shadow(color: Colors.black, blurRadius: 5),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-        ],
-      ),
+    return NarrationFrame(
+      style: NarrationFrameStyle.forActor(_selectedActor),
+      feed: feed,
+      caption: _visibleNarrationPhrase,
+      captionVisible: _isNarrationPlaying,
+      title: _filmOpening?.title,
+      subjectName: _userName,
+      endLabel: _endExperienceLabel,
+      onEnd: _returnToNarrationSelection,
     );
   }
 
@@ -1786,331 +1769,9 @@ class _CameraCapturePageState extends State<CameraCapturePage>
     return spokenCharacters + (pauses * 3.0);
   }
 
-  Widget _buildTelevision(Widget screenContent) {
-    return SizedBox.expand(
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final compact = constraints.maxWidth < 700;
-          final framePadding = compact ? 8.0 : 14.0;
-          final controlGap = compact ? 6.0 : 10.0;
-          return DecoratedBox(
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  Color(0xff242424),
-                  Color(0xff050505),
-                  Color(0xff171717),
-                ],
-              ),
-              border: Border.all(color: Colors.white, width: compact ? 3 : 5),
-              borderRadius: BorderRadius.circular(compact ? 10 : 18),
-            ),
-            child: CustomPaint(
-              painter: _TvTexturePainter(),
-              child: Padding(
-                padding: EdgeInsets.all(framePadding),
-                child: Row(
-                  children: [
-                    Expanded(
-                      flex: 8,
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          color: Colors.black,
-                          borderRadius: BorderRadius.circular(
-                            compact ? 10 : 18,
-                          ),
-                          border: Border.all(
-                            color: Colors.white,
-                            width: compact ? 4 : 6,
-                          ),
-                        ),
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(compact ? 6 : 12),
-                          child: screenContent,
-                        ),
-                      ),
-                    ),
-                    SizedBox(width: controlGap),
-                    Expanded(
-                      flex: 2,
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          gradient: const LinearGradient(
-                            begin: Alignment.topCenter,
-                            end: Alignment.bottomCenter,
-                            colors: [
-                              Color(0xff202020),
-                              Colors.black,
-                              Color(0xff101010),
-                            ],
-                          ),
-                          border: Border(
-                            left: BorderSide(
-                              color: Colors.white,
-                              width: compact ? 2 : 4,
-                            ),
-                          ),
-                        ),
-                        child: Padding(
-                          padding: EdgeInsets.fromLTRB(
-                            compact ? 5 : 10,
-                            compact ? 5 : 10,
-                            compact ? 2 : 4,
-                            compact ? 5 : 10,
-                          ),
-                          child: _buildTvControls(),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          );
-        },
-      ),
-    );
-  }
-
   String get _endExperienceLabel => switch (_selectedActor) {
     'David Attenborough' => 'End documentary',
     'Eve' => 'End news cycle',
     _ => 'End story',
   };
-
-  Widget _buildTvControls() {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final compact = constraints.maxWidth < 150;
-        final buttonWidth = compact ? constraints.maxWidth * 0.22 : 18.0;
-        return Column(
-          children: [
-            Expanded(
-              flex: 3,
-              child: Center(
-                child: Tooltip(
-                  message: _endExperienceLabel,
-                  child: FilledButton(
-                    key: const ValueKey('end-experience-button'),
-                    onPressed: _returnToNarrationSelection,
-                    style: FilledButton.styleFrom(
-                      padding: EdgeInsets.symmetric(
-                        horizontal: compact ? 4 : 8,
-                        vertical: compact ? 8 : 12,
-                      ),
-                      textStyle: TextStyle(fontSize: compact ? 9 : 12),
-                    ),
-                    child: Text(
-                      _endExperienceLabel,
-                      textAlign: TextAlign.center,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            SizedBox(height: compact ? 6 : 12),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: List.generate(
-                3,
-                (_) => Container(
-                  width: buttonWidth,
-                  height: compact ? 5 : 8,
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(3),
-                  ),
-                ),
-              ),
-            ),
-            SizedBox(height: compact ? 7 : 14),
-            Expanded(
-              flex: 5,
-              child: Container(
-                margin: EdgeInsets.symmetric(horizontal: compact ? 2 : 6),
-                decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [
-                      Color(0xff202020),
-                      Colors.black,
-                      Color(0xff111111),
-                    ],
-                  ),
-                  border: Border.all(
-                    color: Colors.white,
-                    width: compact ? 2 : 3,
-                  ),
-                  borderRadius: BorderRadius.circular(100),
-                  boxShadow: const [
-                    BoxShadow(
-                      color: Colors.black87,
-                      blurRadius: 8,
-                      spreadRadius: 2,
-                    ),
-                    BoxShadow(
-                      color: Colors.white12,
-                      blurRadius: 2,
-                      spreadRadius: 1,
-                    ),
-                  ],
-                ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(100),
-                  child: CustomPaint(
-                    painter: _SpeakerTexturePainter(),
-                    child: Padding(
-                      padding: EdgeInsets.symmetric(
-                        horizontal: compact ? 5 : 10,
-                        vertical: compact ? 10 : 16,
-                      ),
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                        children: List.generate(compact ? 7 : 11, (index) {
-                          final isEndLine =
-                              index == 0 || index == (compact ? 6 : 10);
-                          return FractionallySizedBox(
-                            widthFactor: isEndLine ? 0.6 : 1,
-                            child: Container(
-                              height: compact ? 1 : 2,
-                              width: double.infinity,
-                              margin: EdgeInsets.symmetric(
-                                horizontal: compact ? 3 : 7,
-                              ),
-                              color: Colors.white,
-                            ),
-                          );
-                        }),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        );
-      },
-    );
-  }
-}
-
-class _SpeakerTexturePainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final depthPaint = Paint()
-      ..shader = const LinearGradient(
-        begin: Alignment.topLeft,
-        end: Alignment.bottomRight,
-        colors: [
-          Color(0xff3b4144),
-          Color(0xff151719),
-          Color(0xff050607),
-          Color(0xff24272a),
-        ],
-        stops: [0, 0.22, 0.7, 1],
-      ).createShader(Offset.zero & size);
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Rect.fromLTWH(3, 3, size.width - 6, size.height - 6),
-        Radius.circular(size.width * 0.42),
-      ),
-      depthPaint,
-    );
-
-    final innerRim = Paint()
-      ..color = Colors.white.withValues(alpha: 0.14)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1;
-    final innerShadow = Paint()
-      ..color = Colors.black.withValues(alpha: 0.42)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2;
-    final rimRect = RRect.fromRectAndRadius(
-      Rect.fromLTWH(5, 5, size.width - 10, size.height - 10),
-      Radius.circular(size.width * 0.42),
-    );
-    canvas.drawRRect(rimRect, innerShadow);
-    canvas.drawRRect(rimRect.deflate(3), innerRim);
-
-    final ribPaint = Paint()
-      ..color = Colors.white.withValues(alpha: 0.035)
-      ..strokeWidth = 1;
-    final blueRibPaint = Paint()
-      ..color = const Color(0xff6e9aa3).withValues(alpha: 0.09)
-      ..strokeWidth = 1;
-    final bronzeRibPaint = Paint()
-      ..color = const Color(0xffb28b68).withValues(alpha: 0.07)
-      ..strokeWidth = 1;
-    final shadowPaint = Paint()
-      ..color = Colors.black.withValues(alpha: 0.2)
-      ..strokeWidth = 2;
-    for (double x = 5; x < size.width; x += 7) {
-      final rib = x.toInt() % 21 == 0
-          ? blueRibPaint
-          : x.toInt() % 28 == 0
-          ? bronzeRibPaint
-          : ribPaint;
-      canvas.drawLine(Offset(x, 0), Offset(x, size.height), rib);
-    }
-    for (double x = 8; x < size.width; x += 28) {
-      canvas.drawLine(Offset(x, 0), Offset(x, size.height), shadowPaint);
-    }
-
-    final dustPaint = Paint()..color = Colors.white.withValues(alpha: 0.1);
-    for (double y = 18; y < size.height; y += 31) {
-      canvas.drawCircle(Offset(size.width * 0.22, y), 0.7, dustPaint);
-      canvas.drawCircle(Offset(size.width * 0.78, y + 9), 0.6, dustPaint);
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
-}
-
-class _TvTexturePainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final diagonalPaint = Paint()
-      ..color = Colors.white.withValues(alpha: 0.055)
-      ..strokeWidth = 1;
-    for (double x = -size.height; x < size.width; x += 9) {
-      canvas.drawLine(
-        Offset(x, 0),
-        Offset(x + size.height, size.height),
-        diagonalPaint,
-      );
-    }
-
-    final speckPaint = Paint()..color = Colors.white.withValues(alpha: 0.075);
-    for (double y = 6; y < size.height; y += 18) {
-      for (double x = 5; x < size.width; x += 21) {
-        canvas.drawCircle(Offset(x, y), 0.8, speckPaint);
-      }
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
-}
-
-class _OldTvEffectPainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final scanlinePaint = Paint()
-      ..color = Colors.black.withValues(alpha: 0.16)
-      ..strokeWidth = 1;
-    for (double y = 0; y < size.height; y += 4) {
-      canvas.drawLine(Offset(0, y), Offset(size.width, y), scanlinePaint);
-    }
-
-    final tintPaint = Paint()
-      ..color = const Color(0xffd6b27d).withValues(alpha: 0.04);
-    canvas.drawRect(Offset.zero & size, tintPaint);
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }

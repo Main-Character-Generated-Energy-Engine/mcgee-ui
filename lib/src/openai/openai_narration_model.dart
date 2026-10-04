@@ -41,7 +41,9 @@ final class OpenAiNarrationModel implements StreamingNarrationModel {
   @override
   Future<NarrationDraft> narrate(NarrationRequest request) async {
     final formatInstruction =
-        continuous && narratorInstructions != null && request.memory.hasOnlyOpening
+        continuous &&
+            narratorInstructions != null &&
+            request.memory.hasOnlyOpening
         ? sceneSettingPassageInstruction
         : continuous
         ? 'The spoken passage must contain 10 to $maximumWords words in one confident, complete sentence, with no stage directions.'
@@ -58,9 +60,31 @@ ${language.writerInstruction}
 ${characterInstruction()}
 $formatInstruction Motifs are terse labels for dramatic devices used. Canon
 updates preserve the ongoing fictional goal, developments already spoken,
-recurring objects, and unresolved snag. Label invented motives and consequences
-as fiction, and retain them as story canon across frames. Never store an imagined
+recurring objects, and unresolved snag. In canon values only, label invented
+motives and consequences as fiction. Keep those labels out of the spoken text. For every selected narrator, update story_goal, story_obstacle,
+story_tactic, arc_stage, latest_development, story_outcome, and open_thread.
+The arc_stage is the supplied stage: setup, attempt, snag, response, choice,
+or payoff. story_goal describes this episode’s tactical question, distinct from the
+long-term biological drive or incident. Preserve it through six passages. Record what
+this spoken passage contributes, including practical fictional intentions;
+separate those from observations. At payoff, state the limited result and mark
+the episode's question resolved, while preserving unfinished physical aims.
+Keep the outcome empty until spoken. At the next setup, replace the previous
+goal, snag, tactic, and outcome with the new linked question. The previous
+question remains resolved even if its physical objective is still pending. For David set biological_drive to reproduction and replace an older drive
+and its tactics with the current reproductive question. Also retain
+courtship_strategy and resolved_strategies: at payoff, append the strategy to
+its last three resolved strategies; at setup, choose a meaningfully different
+strategy. Retiming or rephrasing the previous action leaves it the same strategy. For all modes,
+current_activity must be replaced each turn with behavior supported by the
+CURRENT attached image. Revise any old goal, tactic, obstacle, or outcome that
+requires a physical object absent or uncertain in this image. Preserve only
+the underlying motive. Saved state never establishes present object visibility. A planned action stays a plan
+until visual evidence supports its occurrence. Never store deep speculative
+psychology or an unseen result as fact.
+Only use the state keys relevant to the selected mode. Never store an imagined
 action or outcome as an observed fact, or add unspoken plot developments.
+${continuous && narratorInstructions != null ? storyArcInstruction(request.memory) : ''}
 ''',
       'input': includeCaptures
           ? await _inputWithCaptures(request)
@@ -132,7 +156,9 @@ action or outcome as an observed fact, or add unspoken plot developments.
     }
 
     final formatInstruction =
-        continuous && narratorInstructions != null && request.memory.hasOnlyOpening
+        continuous &&
+            narratorInstructions != null &&
+            request.memory.hasOnlyOpening
         ? sceneSettingPassageInstruction
         : continuous
         ? 'The passage must contain 10 to $maximumWords words in one confident, complete sentence, with no stage directions.'
@@ -150,6 +176,7 @@ ${characterInstruction()}
 $formatInstruction
 Output only the exact words to speak, without quotation marks, a label, JSON,
 Markdown, commentary, or stage directions.
+${continuous && narratorInstructions != null ? storyArcInstruction(request.memory) : ''}
 ''',
       'input': includeCaptures
           ? await _inputWithCaptures(request)

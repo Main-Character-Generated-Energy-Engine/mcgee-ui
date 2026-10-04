@@ -73,6 +73,10 @@ final class SharedPreferencesNarrativeMemoryStore
       }
       return NarrativeMemory.fromSnapshot(
         NarrativeMemorySnapshot(
+          spokenNarrationCount: switch (value['spokenNarrationCount']) {
+            final int count when count >= 0 => count,
+            _ => 0,
+          },
           recentNarrations: narrations,
           canon: canon,
           storySummary: value['storySummary'] is String
@@ -96,6 +100,7 @@ final class SharedPreferencesNarrativeMemoryStore
       'version': 2,
       'characterName': owner,
       'storySummary': snapshot.storySummary,
+      'spokenNarrationCount': snapshot.spokenNarrationCount,
       'recentNarrations': <Map<String, Object?>>[
         for (final narration in snapshot.recentNarrations)
           <String, Object?>{

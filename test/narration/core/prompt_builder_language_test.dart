@@ -43,6 +43,65 @@ void main() {
     expect(continuous, isNot(contains('Ground every line')));
   });
 
+  test(
+    'story state survives unchanged frames and transcript rollover',
+    () async {
+      final story = NarrativeMemory(maxNarrations: 2);
+      story.recordNarration(
+        text: 'I remembered Ari waiting for certainty before beginning.',
+        observedAt: DateTime.utc(2026),
+        canonUpdates: const {
+          'story_goal': 'Fiction: begin despite uncertainty',
+          'story_obstacle': 'Fiction: fear of an imperfect start',
+          'open_thread': 'Will Ari accept an imperfect start?',
+        },
+      );
+      for (var beat = 0; beat < 4; beat++) {
+        story.recordObservation(observation);
+        story.recordNarration(
+          text: 'Inner beat $beat.',
+          observedAt: DateTime.utc(2026, 1, 1, 0, beat + 1),
+          canonUpdates: {'latest_development': 'Fiction: approach $beat'},
+        );
+      }
+      final api = _CapturingApi();
+      final snapshot = story.snapshot;
+      await OpenAiNarrationModel(client: api).narrate(
+        NarrationRequest(
+          prompt: const ContinuousDocumentaryPromptBuilder().build(
+            observation: observation,
+            memory: snapshot,
+          ),
+          observation: observation,
+          captures: const [],
+          memory: snapshot,
+        ),
+      );
+      final input = api.responseBody['input'] as String;
+      expect(snapshot.recentNarrations, hasLength(2));
+      expect(
+        input,
+        contains('Story goal:\nFiction: begin despite uncertainty'),
+      );
+      expect(
+        input,
+        contains('Story obstacle:\nFiction: fear of an imperfect start'),
+      );
+      expect(
+        input,
+        contains('Latest spoken development:\nFiction: approach 3'),
+      );
+      expect(
+        input,
+        contains('Open story thread:\nWill Ari accept an imperfect start?'),
+      );
+      expect(
+        input,
+        contains('Last spoken line — continue this beat:\nInner beat 3.'),
+      );
+    },
+  );
+
   test('provider owns language, mode, name preference, and length rules', () async {
     final api = _CapturingApi();
     final model = OpenAiNarrationModel(

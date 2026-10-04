@@ -40,6 +40,7 @@ void main() {
     expect(track.cancellations, 1);
     expect(audio.playCalls, 0);
     expect(engine.memory.recentNarrations, isEmpty);
+    expect(engine.memory.spokenNarrationCount, 0);
     await engine.close();
   });
 
@@ -91,6 +92,7 @@ void main() {
     renderer.result.complete(_rendered(track.track));
     await audio.requested.future;
     expect(engine.memory.recentNarrations, isEmpty);
+    expect(engine.memory.spokenNarrationCount, 0);
     expect(track.cancellations, 0);
 
     final started = engine.events.firstWhere((event) => event is NarrationStarted);
@@ -161,6 +163,7 @@ void main() {
     await track.cancelled.future;
     expect(track.cancellations, 1);
     expect(engine.memory.recentNarrations, isEmpty);
+    expect(engine.memory.spokenNarrationCount, 0);
     await engine.close();
   });
 
@@ -178,6 +181,7 @@ void main() {
     await track.cancelled.future;
     expect(track.cancellations, 1);
     expect(engine.memory.recentNarrations.single.text, 'An opening.');
+    expect(engine.memory.spokenNarrationCount, 1);
     await engine.close();
   });
 

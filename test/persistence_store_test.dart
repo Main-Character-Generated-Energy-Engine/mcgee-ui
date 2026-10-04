@@ -38,6 +38,7 @@ void main() {
     );
 
     expect(restored.snapshot.storySummary, 'Ari opens the notebook.');
+    expect(restored.snapshot.spokenNarrationCount, 2);
     expect(
       restored.snapshot.recentNarrations.single.text,
       'Ari studies the page in solemn silence.',

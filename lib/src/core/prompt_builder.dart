@@ -53,14 +53,29 @@ ${observation.description}
 Visible scene details:
 ${details.isEmpty ? '(none)' : details}
 
-Established canon:
+Historical story state — prior narrated claims; recheck physical details against the current image:
 ${canon.isEmpty ? '(none)' : canon}
 
 Story so far — older spoken beats:
 ${storySummary.isEmpty ? '(none)' : storySummary}
 
-Current activity:
+Previously narrated activity — re-establish from the current image:
 ${memory.canon['current_activity'] ?? '(none)'}
+
+Story goal:
+${memory.canon['story_goal'] ?? '(none)'}
+
+Story obstacle:
+${memory.canon['story_obstacle'] ?? '(none)'}
+
+Current arc stage:
+${memory.canon['arc_stage'] ?? '(none)'}
+
+Latest spoken development:
+${memory.canon['latest_development'] ?? '(none)'}
+
+Biological drive:
+${memory.canon['biological_drive'] ?? '(none)'}
 
 Open story thread:
 ${memory.canon['open_thread'] ?? '(none)'}
