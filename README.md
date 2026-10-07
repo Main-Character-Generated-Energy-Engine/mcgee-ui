@@ -6,7 +6,52 @@ fallback.
 
 ## Run
 
-Install Flutter (with Chrome support) and Node.js, then run `flutter pub get`.
+### Devcontainer (web development)
+
+Install Docker and the VS Code Dev Containers extension. Open this repository
+in VS Code and run **Dev Containers: Reopen in Container**. The container installs
+Flutter 3.47.6 (including Dart), Node.js 24.19.0, and Netlify CLI 27.11.2,
+enables web support, and runs `flutter pub get`. No host Flutter or Node.js
+installation is needed.
+Flutter comes from the official prebuilt Linux SDK archive, verified against
+its SHA-256 checksum. The image uses x64; ARM hosts (including Apple Silicon)
+run it through Docker's emulation.
+
+Codex and Claude Code extensions are installed in the container. Their state
+is stored on the host in `~/.agent-state/mcgee-narrator/codex` and
+`~/.agent-state/mcgee-narrator/claude`, mounted at `/home/node/.codex` and
+`/home/node/.claude`. Sessions and file-based sign-ins survive container
+rebuilds. VS Code's server state is persisted in `~/.vscode-server`, with
+workspace state in `~/.vscode-server-workspaces/mcgee-narrator`, following
+aricatadora's devcontainer layout. The workspace-specific directory names use
+the checkout folder's basename. These directories are created automatically
+on the host before the container starts.
+
+Configure the provider keys below, run `npm run dev` in the container terminal, then open
+`http://localhost:8770` in your host browser. Ports 8770 (app) and 8767
+(speech relay) are forwarded to the same local port numbers; keep both
+ports free on the host.
+
+Grant camera access in your host browser. The container uses
+Flutter's `web-server` device instead of launching Chrome inside the container.
+Browser playback, camera access, and the localhost provider endpoints use the
+forwarded ports. Keep the forwards private and access the app through localhost.
+
+Tests, analysis, and web builds also run in the container terminal. This setup
+targets web development; it does not include Android or iOS toolchains. Change
+the pinned versions in `.devcontainer/Dockerfile` and rebuild the container
+when upgrading. Update the Flutter archive checksum alongside its version.
+
+### Host development
+
+Alternatively, install Flutter (with Chrome support) and Node.js on the host,
+then run `flutter pub get`. The host launcher opens Chrome for `npm run dev`.
+To serve the app in your own browser instead, set `MCGEE_WEB_DEVICE=web-server`.
+`MCGEE_DEV_HOST` controls the app and relay bind address (default `127.0.0.1`;
+the devcontainer sets `0.0.0.0`).
+
+### Provider credentials
+
 Set `OPENROUTER_API_KEY` and `FISH_AUDIO_API_KEY`, or put each key in its
 ignored local file:
 
@@ -17,11 +62,10 @@ ignored local file:
 
 | Command | Purpose |
 | --- | --- |
-| `npm run dev:web` | Launch Chrome and a local Fish speech relay on port 8767. |
-| `npm run dev:e2e` | Launch the browser test app at `http://localhost:8770`; no keys or camera permission needed. |
+| `npm run dev` | Run the web app and a local Fish speech relay on port 8767. |
 | `node scripts/web.mjs check` | Check local credentials without printing them. |
 | `npm run build:web` | Build release assets in `build/web`. |
-| `npm test` | Test the browser player and speech relay. |
+| `npm run test` | Run the JavaScript and Flutter test suites. |
 | `flutter test` | Run Flutter tests. |
 | `flutter analyze` | Check Dart code. |
 
@@ -34,9 +78,11 @@ speech relay currently has no user sign-in; secure and meter it before opening
 the site to others. Native builds read the local keys at runtime and use Fish
 WebSocket directly.
 
-## Browser end-to-end test
+## Manual browser end-to-end test
 
-Run `npm run dev:e2e`. Enter a name and press Enter, then press Enter on the
+For a manual browser check without credentials or a physical camera, run
+`node scripts/web.mjs e2e` and open `http://localhost:8770`.
+Enter a name and press Enter, then press Enter on the
 camera consent screen. The app cycles through
 `test/fixtures/mock-camera-feed/1.jpg` to `4.jpg` every two seconds. Local mock
 OpenRouter and Fish responses exercise
@@ -44,7 +90,7 @@ the opening, live narration, speech request, and browser playback paths. Check
 `http://127.0.0.1:8767/__e2e/state` for request counts and `distinctFrames`;
 the latter should increase as live narration uses different camera images.
 This mode is enabled only by launcher supplied Dart defines.
-Set `MOCK_FISH_DELAY_MS=30000` when running `npm run dev:e2e` to exercise the
+Set `MOCK_FISH_DELAY_MS=30000` when running `node scripts/web.mjs e2e` to exercise the
 five-second opening warning and late audio recovery.
 
 ## Narration quality evaluation
@@ -125,7 +171,9 @@ opening audio begins.
 ## Deploy
 
 The Netlify site is `mcgee-narrator`. Set `FISH_AUDIO_API_KEY` as a Netlify
-server environment variable. After installing and logging in to the Netlify
-CLI, run `netlify link` for a new checkout, then `npm run deploy`. That command
+server environment variable. The devcontainer includes the Netlify CLI; for
+host development, install it separately. Run `netlify login` in your development
+terminal and complete authentication in your host browser, then run
+`netlify link` for a new checkout and `npm run deploy`. That command
 runs tests, builds the web app, and deploys the static assets with the speech
 function. A web build embeds the OpenRouter key supplied at build time.

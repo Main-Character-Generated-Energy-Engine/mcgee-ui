@@ -3,10 +3,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev:web": "node scripts/web.mjs dev",
-    "dev:e2e": "node scripts/web.mjs e2e",
+    "dev": "node scripts/web.mjs dev",
     "build:web": "node scripts/web.mjs build",
     "deploy": "node scripts/web.mjs deploy",
-    "test": "node --test test/*_test.mjs"
+    "test": "node --test test/*_test.mjs && flutter test"
   }
 }

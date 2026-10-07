@@ -1,0 +1,47 @@
+{
+  "name": "MCGEE Flutter Web",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "remoteUser": "node",
+  "init": true,
+  "initializeCommand": "install -d -m 0700 \"${localEnv:HOME}/.vscode-server\" \"${localEnv:HOME}/.vscode-server/data/User/workspaceStorage\" \"${localEnv:HOME}/.vscode-server-workspaces/${localWorkspaceFolderBasename}\" \"${localEnv:HOME}/.agent-state/${localWorkspaceFolderBasename}/codex\" \"${localEnv:HOME}/.agent-state/${localWorkspaceFolderBasename}/claude\"",
+  "mounts": [
+    "source=${localEnv:HOME}/.vscode-server,target=/home/node/.vscode-server,type=bind",
+    "source=${localEnv:HOME}/.vscode-server-workspaces/${localWorkspaceFolderBasename},target=/home/node/.vscode-server/data/User/workspaceStorage,type=bind",
+    "source=${localEnv:HOME}/.agent-state/${localWorkspaceFolderBasename}/codex,target=/home/node/.codex,type=bind",
+    "source=${localEnv:HOME}/.agent-state/${localWorkspaceFolderBasename}/claude,target=/home/node/.claude,type=bind"
+  ],
+  "runArgs": ["--platform=linux/amd64"],
+  "containerEnv": {
+    "MCGEE_WEB_DEVICE": "web-server",
+    "MCGEE_DEV_HOST": "0.0.0.0"
+  },
+  "forwardPorts": [8770, 8767],
+  "portsAttributes": {
+    "8770": {
+      "label": "mcgee",
+      "onAutoForward": "notify",
+      "requireLocalPort": true
+    },
+    "8767": {
+      "label": "mcgee speech relay",
+      "onAutoForward": "silent",
+      "requireLocalPort": true
+    }
+  },
+  "postCreateCommand": "flutter pub get",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "Dart-Code.dart-code",
+        "Dart-Code.flutter",
+        "openai.chatgpt",
+        "anthropic.claude-code"
+      ],
+      "settings": {
+        "dart.flutterSdkPath": "/home/node/flutter"
+      }
+    }
+  }
+}

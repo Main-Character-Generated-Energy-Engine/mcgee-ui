@@ -3,7 +3,7 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { handleSpeech } from "../netlify/functions/speech.mjs";
 
-export function startSpeechServer({ port = 8767, apiKey, fetcher } = {}) {
+export function startSpeechServer({ port = 8767, host = "127.0.0.1", apiKey, fetcher } = {}) {
   const server = createServer(async (req, res) => {
     const url = `http://localhost:${port}${req.url}`;
     if (new URL(url).pathname !== "/api/speech") {
@@ -36,6 +36,6 @@ export function startSpeechServer({ port = 8767, apiKey, fetcher } = {}) {
       else res.destroy(error);
     }
   });
-  server.listen(port, "127.0.0.1");
+  server.listen(port, host);
   return server;
 }

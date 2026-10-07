@@ -4,11 +4,12 @@ Read `README.md` for setup, commands, architecture, and the browser test flow.
 Work from the repository root; the launcher and mock server resolve files
 relative to it.
 
-- Use `npm run dev:e2e` for repeatable browser testing. It uses
+- Use `npm run test` for the JavaScript and Flutter test suites.
+- Use `node scripts/web.mjs e2e` for manual, repeatable browser testing. It uses
   `test/fixtures/mock-camera-feed/` and requires no credentials or physical
   camera. Inspect
   `http://127.0.0.1:8767/__e2e/state` after the opening and live narration.
-- Use `npm run dev:web` for real providers. Local keys belong in ignored
+- Use `npm run dev` to launch the app with real providers. Local keys belong in ignored
   `.secrets/` files or environment variables. Never print or commit them.
 - Keep speech on Fish `s2.1-pro-free` for all voices. OpenRouter writes text;
   it is not a speech fallback. See `lib/src/openrouter/openrouter_voice_option.dart`

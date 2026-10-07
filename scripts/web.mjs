@@ -41,18 +41,23 @@ const defines = resolve(mode === "e2e" ? ".secrets/e2e-keys.json" : ".secrets/we
 writeFileSync(defines, JSON.stringify(config), { mode: 0o600 });
 
 if (mode === "dev" || mode === "e2e") {
+  const host = process.env.MCGEE_DEV_HOST ?? "127.0.0.1";
+  const device = mode === "e2e" ? "web-server" : (process.env.MCGEE_WEB_DEVICE ?? "chrome");
   const server = mode === "e2e"
     ? (await import("./e2e-server.mjs")).startE2EServer({
+      host,
       fishDelayMs: Number(process.env.MOCK_FISH_DELAY_MS ?? 0),
     })
     : (await import("./speech-dev.mjs")).startSpeechServer({
+      host,
       apiKey: credential("FISH_AUDIO_API_KEY", ".secrets/fishaudio-key"),
     });
-  const flutter = spawn("flutter", ["run", "-d", mode === "e2e" ? "web-server" : "chrome",
+  const flutter = spawn("flutter", ["run", "-d", device,
+    `--web-hostname=${host}`,
+    ...(device === "web-server" ? ["--web-port=8770"] : []),
     `--dart-define-from-file=${defines}`,
     "--dart-define=SPEECH_ENDPOINT=http://127.0.0.1:8767/api/speech",
     ...(mode === "e2e" ? [
-      "--web-port=8770",
       "--dart-define=MOCK_CAMERA_FEED=true",
       "--dart-define=OPENROUTER_ENDPOINT=http://127.0.0.1:8767/openrouter/",
     ] : []),
@@ -62,7 +67,6 @@ if (mode === "dev" || mode === "e2e") {
 } else {
   if (mode === "deploy") {
     run("npm", ["test"]);
-    run("flutter", ["test"]);
   }
   run("flutter", ["build", "web", "--release", `--dart-define-from-file=${defines}`]);
   if (mode === "deploy") run("netlify", ["deploy", "--prod", "--dir=build/web"]);

@@ -6,7 +6,7 @@ import { handleSpeech } from "../netlify/functions/speech.mjs";
 
 const mp3 = readFileSync(resolve("lib/assets/switch.mp3"));
 
-export function startE2EServer({ port = 8767, fishDelayMs = 0 } = {}) {
+export function startE2EServer({ port = 8767, host = "127.0.0.1", fishDelayMs = 0 } = {}) {
   const state = { openings: 0, liveRequests: 0, speechRequests: 0, frameSamples: new Set() };
   const server = createServer(async (req, res) => {
     const url = new URL(req.url, `http://127.0.0.1:${port}`);
@@ -80,6 +80,6 @@ export function startE2EServer({ port = 8767, fishDelayMs = 0 } = {}) {
     }
     res.writeHead(404, cors).end();
   });
-  server.listen(port, "127.0.0.1");
+  server.listen(port, host);
   return server;
 }
