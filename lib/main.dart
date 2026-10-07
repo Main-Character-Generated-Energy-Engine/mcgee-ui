@@ -20,6 +20,8 @@ import 'film_opening_credits.dart';
 import 'fish_audio_key_loader.dart';
 import 'fish_audio_transport.dart';
 import 'narration_frame.dart';
+import 'narration_diagnostics.dart';
+import 'narration_error_card.dart';
 import 'narrative_memory_store.dart';
 import 'narrator_profile.dart';
 import 'openrouter_key_loader.dart';
@@ -100,6 +102,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
   OpenRouterNarrationRuntime? _narrationRuntime;
   String? _error;
   String? _audioError;
+  NarrationDiagnostics? _audioDiagnostics;
   String? _openingPreparationFailure;
   Timer? _openingAudioTimer;
   Timer? _openingWaitingTitlesTimer;
@@ -160,6 +163,23 @@ class _CameraCapturePageState extends State<CameraCapturePage>
   void _printError(String context, Object error, [StackTrace? stackTrace]) {
     final trace = stackTrace == null ? '' : '\n$stackTrace';
     debugPrint('[MCGEE] $context: $error$trace');
+  }
+
+  void _recordNarrationFailure(
+    String stage,
+    Object error, [
+    StackTrace? stackTrace,
+  ]) {
+    final details = NarrationDiagnostics(
+      stage: stage,
+      error: error,
+      stackTrace: stackTrace,
+      narrator: _selectedActor,
+      language: _selectedLanguage.englishName,
+      credential: widget.ioApiKeyOverride,
+    );
+    _audioDiagnostics = details;
+    debugPrint('[MCGEE] ${details.report}');
   }
 
   @override
@@ -513,7 +533,12 @@ class _CameraCapturePageState extends State<CameraCapturePage>
         _visibleNarrationPhrase = null;
       });
       if (!_startupLineRequested) {
-        setState(() => _filmOpening = null);
+        setState(() {
+          _filmOpening = null;
+          _openingPreparationFailure = null;
+          _audioError = null;
+          _audioDiagnostics = null;
+        });
         _creditsController.reset();
         _openingPreparation = _prepareOpening(runtime);
       }
@@ -625,6 +650,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
       _isConnecting = true;
       _connectionError = null;
       _audioError = null;
+      _audioDiagnostics = null;
     });
     _cancelOpeningWait();
     try {
@@ -684,6 +710,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
             _episodeMemory.snapshot.recentNarrations.isNotEmpty;
         _filmOpening = null;
         _openingPreparationFailure = null;
+        _audioDiagnostics = null;
         _creditsController.reset();
         _showWaitingTitles = false;
         _titlesFadedAt = null;
@@ -695,6 +722,12 @@ class _CameraCapturePageState extends State<CameraCapturePage>
         if (!mounted || !identical(runtime, _narrationRuntime)) return;
         if (event case NarrationFailed(:final error)) {
           _printError('Narration engine failed', error);
+          _recordNarrationFailure(
+            _experienceStage == _ExperienceStage.opening
+                ? 'Opening playback'
+                : 'Live narration',
+            error,
+          );
           setState(() {
             _narrationUnavailable = true;
             if (_experienceStage != _ExperienceStage.opening) {
@@ -757,6 +790,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
               _hasStartedNarrationAudio = true;
               _narrationUnavailable = false;
               _audioError = null;
+              _audioDiagnostics = null;
             }
             if (visiblePhrase != null) {
               _visibleNarrationPhrase = visiblePhrase;
@@ -814,6 +848,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
       if (revision != _actorSelectionGeneration) return null;
       _printError('Film opening preparation failed', error, stackTrace);
       if (mounted && identical(runtime, _narrationRuntime)) {
+        _recordNarrationFailure('Opening preparation', error, stackTrace);
         final message = error.toString().contains('HTTP 402')
             ? 'Opening narration is unavailable because the speech service rejected this request. Return to narration selection and try again.'
             : 'Opening narration could not be prepared. Return to narration selection and try again.';
@@ -960,6 +995,14 @@ class _CameraCapturePageState extends State<CameraCapturePage>
 
   void _showOpeningAudioError(String message) {
     if (!mounted || _experienceStage != _ExperienceStage.opening) return;
+    if (_audioDiagnostics == null) {
+      _recordNarrationFailure(
+        _openingPreparationFailure == null
+            ? 'Waiting for opening playback'
+            : 'Opening preparation',
+        message,
+      );
+    }
     setState(() {
       _narrationUnavailable = true;
       _audioError = message;
@@ -986,6 +1029,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
       _experienceStage = _ExperienceStage.setup;
       _showWelcomeBack = _userName != null;
       _audioError = null;
+      _audioDiagnostics = null;
       _filmOpening = null;
       _openingPreparationFailure = null;
       _titlesFadedAt = null;
@@ -1036,6 +1080,10 @@ class _CameraCapturePageState extends State<CameraCapturePage>
           outcome.error ?? outcome.reason ?? 'Unknown narration error',
         );
         if (mounted && identical(runtime, _narrationRuntime)) {
+          _recordNarrationFailure(
+            'Opening playback',
+            outcome.error ?? outcome.reason ?? 'Unknown narration error',
+          );
           _openingPreparationFailure =
               'Opening narration could not play. Return to narration selection and try again.';
           if (_audioError != null) {
@@ -1053,6 +1101,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
     } catch (error, stackTrace) {
       _printError('Opening narration failed', error, stackTrace);
       if (mounted && identical(runtime, _narrationRuntime)) {
+        _recordNarrationFailure('Opening playback', error, stackTrace);
         _openingPreparationFailure =
             'Opening narration could not play. Return to narration selection and try again.';
         if (_audioError != null) {
@@ -1164,32 +1213,21 @@ class _CameraCapturePageState extends State<CameraCapturePage>
               top: 16,
               left: 16,
               right: 16,
+              bottom: 16,
               child: SafeArea(
-                child: Material(
-                  key: const ValueKey('narration-audio-error'),
-                  color: const Color(0xff572c2c),
-                  borderRadius: BorderRadius.circular(12),
-                  elevation: 8,
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          error,
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(color: Colors.white),
-                        ),
-                        if (_experienceStage == _ExperienceStage.opening ||
-                            _experienceStage == _ExperienceStage.cameraConsent)
-                          TextButton(
-                            key: const ValueKey(
-                              'return-to-narration-selection',
-                            ),
-                            onPressed: _returnToNarrationSelection,
-                            child: const Text('Back to narration selection'),
-                          ),
-                      ],
+                child: Align(
+                  alignment: Alignment.topCenter,
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 640),
+                    child: NarrationErrorCard(
+                      key: const ValueKey('narration-audio-error'),
+                      message: error,
+                      report: _audioDiagnostics?.report ?? error,
+                      onReturnToSelection:
+                          _experienceStage == _ExperienceStage.opening ||
+                              _experienceStage == _ExperienceStage.cameraConsent
+                          ? _returnToNarrationSelection
+                          : null,
                     ),
                   ),
                 ),

@@ -2,7 +2,7 @@
 FROM --platform=linux/amd64 node:24.19.0-bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates curl git unzip xz-utils libglu1-mesa procps sudo \
+    ca-certificates curl git openssh-client unzip xz-utils libglu1-mesa procps sudo \
     && rm -rf /var/lib/apt/lists/* \
     && echo 'node ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/node \
     && chmod 0440 /etc/sudoers.d/node

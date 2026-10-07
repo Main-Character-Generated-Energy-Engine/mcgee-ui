@@ -6,6 +6,7 @@
 // tree, read text, and verify that the values of widget properties are correct.
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mcgee/main.dart';
 import 'package:mcgee/narrative_memory_store.dart';
@@ -58,6 +59,35 @@ void main() {
       ),
       findsOneWidget,
     );
+    final details = tester
+        .widget<SelectableText>(
+          find.byKey(const ValueKey('narration-error-details')),
+        )
+        .data!;
+    expect(details, contains('Stage: Opening preparation'));
+    expect(details, contains('Narrator: Morgan Freeman'));
+    expect(details, contains('Error:'));
+    expect(details, isNot(contains('sk-or-test')));
+    String? copied;
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        if (call.method == 'Clipboard.setData') {
+          copied = (call.arguments as Map)['text'] as String;
+        }
+        return null;
+      },
+    );
+    addTearDown(() {
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      );
+    });
+    await tester.tap(find.byKey(const ValueKey('copy-narration-error')));
+    await tester.pump();
+    expect(copied, contains(details));
+    expect(find.text('Copied'), findsOneWidget);
     await tester.tap(
       find.byKey(const ValueKey('return-to-narration-selection')),
     );

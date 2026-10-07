@@ -5,6 +5,9 @@
   },
   "remoteUser": "node",
   "init": true,
+  "features": {
+    "ghcr.io/devcontainers/features/github-cli:1": {}
+  },
   "initializeCommand": "install -d -m 0700 \"${localEnv:HOME}/.vscode-server\" \"${localEnv:HOME}/.vscode-server/data/User/workspaceStorage\" \"${localEnv:HOME}/.vscode-server-workspaces/${localWorkspaceFolderBasename}\" \"${localEnv:HOME}/.agent-state/${localWorkspaceFolderBasename}/codex\" \"${localEnv:HOME}/.agent-state/${localWorkspaceFolderBasename}/claude\"",
   "mounts": [
     "source=${localEnv:HOME}/.vscode-server,target=/home/node/.vscode-server,type=bind",

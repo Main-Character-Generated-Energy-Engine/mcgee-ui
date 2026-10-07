@@ -27,6 +27,13 @@ aricatadora's devcontainer layout. The workspace-specific directory names use
 the checkout folder's basename. These directories are created automatically
 on the host before the container starts.
 
+Git and the OpenSSH client are installed in the image, and the GitHub CLI is
+installed by a Dev Container feature, matching aricatadora. VS Code Dev Containers
+forwards the host's SSH agent and Git credential helper. For SSH remotes, load
+your GitHub key into the host's SSH agent before opening the container. For
+HTTPS remotes, use the forwarded host credentials or authenticate with
+`gh auth login` and run `gh auth setup-git` inside the container.
+
 Configure the provider keys below, run `npm run dev` in the container terminal, then open
 `http://localhost:8770` in your host browser. Ports 8770 (app) and 8767
 (speech relay) are forwarded to the same local port numbers; keep both
