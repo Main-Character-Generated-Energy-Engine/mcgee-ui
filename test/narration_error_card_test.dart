@@ -6,6 +6,26 @@ import 'package:mcgee/narration_diagnostics.dart';
 import 'package:mcgee/narration_error_card.dart';
 
 void main() {
+  testWidgets('blocked playback recovery invokes play directly from the tap', (
+    tester,
+  ) async {
+    var invoked = false;
+    await tester.pumpWidget(
+      MainApp(
+        home: Scaffold(
+          body: NarrationErrorCard(
+            message: 'Your browser requires a tap to play narration.',
+            report: 'NotAllowedError: Tap required',
+            onPlayNarration: () => invoked = true,
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.byKey(const ValueKey('play-blocked-narration')));
+    expect(invoked, isTrue);
+    expect(find.byKey(const ValueKey('copy-narration-error')), findsOneWidget);
+  });
+
   test(
     'report retains the cause and redacts credentials before truncating',
     () {

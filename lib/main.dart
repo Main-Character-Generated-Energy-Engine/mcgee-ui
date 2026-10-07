@@ -97,6 +97,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
   late final CurvedAnimation _previewEntry;
   Timer? _captureTimer;
   StreamSubscription<NarrationEngineEvent>? _narrationEventSubscription;
+  StreamSubscription<String>? _audioBlockedSubscription;
   CaptureStore? _captureStore;
   FlutterAudioOutput? _audioOutput;
   OpenRouterNarrationRuntime? _narrationRuntime;
@@ -117,6 +118,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
   bool _isReturningToSelection = false;
   bool _narrationUnavailable = false;
   bool _hasStartedNarrationAudio = false;
+  bool _waitingForAudioTap = false;
   bool _isNarrationPlaying = false;
   bool _startupLineRequested = false;
   Future<PreparedFilmOpening?>? _openingPreparation;
@@ -538,6 +540,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
           _openingPreparationFailure = null;
           _audioError = null;
           _audioDiagnostics = null;
+          _waitingForAudioTap = false;
         });
         _creditsController.reset();
         _openingPreparation = _prepareOpening(runtime);
@@ -695,6 +698,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
       final previousRuntime = _narrationRuntime;
       final previousAudioOutput = _audioOutput;
       final previousEventSubscription = _narrationEventSubscription;
+      final previousBlockedSubscription = _audioBlockedSubscription;
       if (!mounted) {
         await runtime.close();
         await audioOutput.dispose();
@@ -706,6 +710,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
         _narrationUnavailable = false;
         _isNarrationPlaying = false;
         _hasStartedNarrationAudio = false;
+        _waitingForAudioTap = false;
         _startupLineRequested =
             _episodeMemory.snapshot.recentNarrations.isNotEmpty;
         _filmOpening = null;
@@ -716,6 +721,22 @@ class _CameraCapturePageState extends State<CameraCapturePage>
         _titlesFadedAt = null;
         _experienceStage = _ExperienceStage.cameraChecking;
         _cameraAccessDenied = false;
+      });
+      _audioBlockedSubscription = audioOutput.playbackBlocked.listen((error) {
+        if (!mounted || !identical(audioOutput, _audioOutput)) return;
+        _cancelOpeningWait();
+        _recordNarrationFailure(
+          _experienceStage == _ExperienceStage.opening
+              ? 'Opening playback'
+              : 'Live playback',
+          error,
+        );
+        setState(() {
+          _waitingForAudioTap = true;
+          _showWaitingTitles = false;
+          _audioError =
+              'Your browser requires a tap to play narration. Tap Play narration to continue.';
+        });
       });
       String? loggedVoice;
       _narrationEventSubscription = runtime.events.listen((event) {
@@ -729,6 +750,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
             error,
           );
           setState(() {
+            _waitingForAudioTap = false;
             _narrationUnavailable = true;
             if (_experienceStage != _ExperienceStage.opening) {
               _audioError = 'Narration audio failed. Please try again.';
@@ -791,6 +813,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
               _narrationUnavailable = false;
               _audioError = null;
               _audioDiagnostics = null;
+              _waitingForAudioTap = false;
             }
             if (visiblePhrase != null) {
               _visibleNarrationPhrase = visiblePhrase;
@@ -806,6 +829,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
           : _prepareOpening(runtime);
       unawaited(_checkCameraPermission());
       await previousEventSubscription?.cancel();
+      await previousBlockedSubscription?.cancel();
       await previousRuntime?.close();
       await previousAudioOutput?.dispose();
       if (mounted &&
@@ -1024,6 +1048,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
     final runtime = _narrationRuntime;
     final audioOutput = _audioOutput;
     final eventSubscription = _narrationEventSubscription;
+    final blockedSubscription = _audioBlockedSubscription;
     final controller = _controller;
     setState(() {
       _experienceStage = _ExperienceStage.setup;
@@ -1035,6 +1060,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
       _titlesFadedAt = null;
       _startupLineRequested = false;
       _hasStartedNarrationAudio = false;
+      _waitingForAudioTap = false;
       _showWaitingTitles = false;
       _controller = null;
       _mockFrames = null;
@@ -1045,6 +1071,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
       _narrationRuntime = null;
       _audioOutput = null;
       _narrationEventSubscription = null;
+      _audioBlockedSubscription = null;
       _openingPreparation = null;
       _isNarrationPlaying = false;
       _visibleNarrationPhrase = null;
@@ -1052,6 +1079,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
     unawaited(controller?.dispose());
     try {
       await eventSubscription?.cancel();
+      await blockedSubscription?.cancel();
       await runtime?.close();
       await audioOutput?.dispose();
     } catch (error, stackTrace) {
@@ -1158,6 +1186,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
     _waitingTitlesController.dispose();
     _nameController.dispose();
     unawaited(_narrationEventSubscription?.cancel());
+    unawaited(_audioBlockedSubscription?.cancel());
     unawaited(_switchSoundPlayer?.dispose());
     unawaited(_music.dispose());
     _controller?.dispose();
@@ -1223,6 +1252,9 @@ class _CameraCapturePageState extends State<CameraCapturePage>
                       key: const ValueKey('narration-audio-error'),
                       message: error,
                       report: _audioDiagnostics?.report ?? error,
+                      onPlayNarration: _waitingForAudioTap
+                          ? () => _audioOutput?.resumeBlockedPlayback()
+                          : null,
                       onReturnToSelection:
                           _experienceStage == _ExperienceStage.opening ||
                               _experienceStage == _ExperienceStage.cameraConsent

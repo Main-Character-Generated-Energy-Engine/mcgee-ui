@@ -132,6 +132,12 @@ separately; it does not evaluate prose quality.
 
 ## Audio and latency
 
+The existing setup tap unlocks the narration audio element before Flutter's
+event queue, camera permission, and provider requests. The browser reuses that
+element for every passage so Safari retains its playback permission. If a
+browser still blocks playback, the prepared audio remains available to resume
+from the error panel without another provider request.
+
 The web relay forwards Fish's response body as it arrives. The browser appends
 MP3 bytes to MediaSource and can play before the response ends; browsers without
 MP3 MediaSource support buffer the passage first. The app uses Fish's `low`

@@ -26,6 +26,11 @@ final class FlutterAudioOutput implements AudioOutput {
 
   AudioPlayer get _audioPlayer => _player ??= AudioPlayer();
 
+  Stream<String> get playbackBlocked =>
+      _streamPlayer?.playbackBlocked ?? const Stream<String>.empty();
+
+  void resumeBlockedPlayback() => _streamPlayer?.resumeBlockedPlayback();
+
   @override
   Future<AudioPlayback> play(AudioTrack track) async {
     if (_disposed) {
@@ -198,6 +203,7 @@ final class FlutterAudioOutput implements AudioOutput {
     if (_disposed) return;
     _disposed = true;
     await stop();
+    await _streamPlayer?.dispose();
     await _positionSubscription?.cancel();
     await _durationSubscription?.cancel();
     await _player?.dispose();

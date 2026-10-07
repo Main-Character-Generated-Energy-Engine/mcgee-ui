@@ -6,12 +6,13 @@ import vm from "node:vm";
 const bridge = await readFile(new URL("../web/narration_audio.js", import.meta.url), "utf8");
 const nextTurn = () => new Promise((resolve) => setImmediate(resolve));
 
-function browser(t, { streaming = true } = {}) {
+function browser(t, { streaming = true, prime = false } = {}) {
   const audios = [];
   const mediaSources = [];
   const urls = new Map();
   const revoked = [];
   const progress = [];
+  const gestureListeners = [];
   class Audio extends EventTarget {
     constructor() {
       super();
@@ -64,7 +65,12 @@ function browser(t, { streaming = true } = {}) {
     }
   }
   const context = vm.createContext({
-    Audio, MediaSource, Blob, setTimeout, clearTimeout,
+    Audio, MediaSource, Blob, Uint8Array, DataView, setTimeout, clearTimeout,
+    document: {
+      addEventListener(event, callback, options) {
+        gestureListeners.push({ event, callback, options });
+      },
+    },
     console: { info() {} },
     URL: {
       createObjectURL(object) {
@@ -76,9 +82,17 @@ function browser(t, { streaming = true } = {}) {
     },
   });
   vm.runInContext(bridge, context);
-  const player = new context.McGeeStreamPlayer((...values) => progress.push(values));
+  if (prime) {
+    const listener = gestureListeners.find(({ event }) => event === "keydown");
+    assert.equal(listener.options.capture, true, "unlock before Flutter queues the event");
+    listener.callback({ type: "keydown", key: "Enter", isTrusted: true });
+  }
+  const blocked = [];
+  const player = new context.McGeeStreamPlayer(
+    (...values) => progress.push(values), (message) => blocked.push(message),
+  );
   t.after(() => player.stop());
-  return { player, audio: audios[0], mediaSources, urls, revoked, progress };
+  return { player, audio: audios[0], mediaSources, urls, revoked, progress, blocked, context, audios };
 }
 
 test("streaming playback reports the playing event before the provider finishes", async (t) => {
@@ -214,4 +228,71 @@ test("unsupported MSE buffers bytes and only requests playback after finish", as
   await start;
   audio.dispatchEvent(new Event("ended"));
   await player.completed;
+});
+
+test("existing gesture primes an unmuted silent WAV and later passages reuse that element", async (t) => {
+  const { player, audio, urls, context, audios } = browser(t, { prime: true });
+  const primeSource = urls.get(audio.src);
+  assert.equal(primeSource.type, "audio/wav");
+  const bytes = new Uint8Array(await primeSource.arrayBuffer());
+  assert.equal(new TextDecoder().decode(bytes.slice(0, 4)), "RIFF");
+  assert.equal(audio.muted, undefined, "muted playback cannot unlock narration");
+  await nextTurn();
+  assert.equal(context.McGeeStreamPlayer.unlocked, true);
+  player.stop();
+  const next = new context.McGeeStreamPlayer(() => {});
+  assert.equal(next.audio, audio);
+  assert.equal(audios.length, 1, "Safari permission must survive passage changes");
+  next.stop();
+});
+
+for (const streaming of [true, false]) {
+  test(`autoplay rejection preserves ${streaming ? "streaming" : "buffered"} audio for a user tap`, async (t) => {
+    const { player, audio, mediaSources, blocked, revoked } = browser(t, { streaming });
+    audio.play = () => Promise.reject(Object.assign(new Error("Tap required"), { name: "NotAllowedError" }));
+    let started = false;
+    const start = player.start().then(() => { started = true; });
+    if (streaming) mediaSources[0].open();
+    const append = player.append(Uint8Array.of(1, 2, 3));
+    if (streaming) {
+      await nextTurn();
+      mediaSources[0].buffer.finishAppend();
+    }
+    await append;
+    await player.finish();
+    await nextTurn();
+    assert.deepEqual(blocked, ["NotAllowedError: Tap required"]);
+    assert.equal(player.stopped, false);
+    assert.equal(started, false);
+    assert.equal(player.receivedBytes, 3);
+    assert.deepEqual(revoked, [], "denied playback must retain the prepared source");
+    let playCalled = false;
+    audio.play = () => { playCalled = true; return Promise.resolve(); };
+    player.resume();
+    assert.equal(playCalled, true, "play must run synchronously inside the tap");
+    audio.dispatchEvent(new Event("playing"));
+    await start;
+    assert.equal(player.waitingForGesture, false);
+    audio.dispatchEvent(new Event("ended"));
+    await player.completed;
+  });
+}
+
+test("stop while waiting for a tap settles startup and releases the source", async (t) => {
+  const { player, audio, blocked, revoked } = browser(t);
+  audio.play = () => Promise.reject(Object.assign(new Error("Tap required"), { name: "NotAllowedError" }));
+  const rejected = assert.rejects(player.start(), /stopped/);
+  await nextTurn();
+  assert.equal(blocked.length, 1);
+  player.stop();
+  await Promise.all([rejected, player.completed]);
+  assert.deepEqual(revoked, ["blob:test-0"]);
+});
+
+test("decode failure remains a failure instead of asking for another tap", async (t) => {
+  const { player, audio, blocked } = browser(t);
+  audio.play = () => Promise.reject(Object.assign(new Error("Cannot decode"), { name: "NotSupportedError" }));
+  await assert.rejects(player.start(), /NotSupportedError: Cannot decode/);
+  assert.deepEqual(blocked, []);
+  assert.equal(player.stopped, true);
 });

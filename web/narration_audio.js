@@ -1,10 +1,56 @@
 // A single MP3 stream, fed by Flutter as fetch() delivers bytes. MSE handles
 // arbitrary network chunk boundaries; each chunk is not a separate audio file.
 globalThis.McGeeStreamPlayer = class McGeeStreamPlayer {
-  constructor(onProgress) {
-    this.audio = new Audio();
+  static getAudio() {
+    return this.audio ??= new Audio();
+  }
+
+  // Run during the existing Continue/camera tap, before provider requests or
+  // the permission prompt. A short silent WAV grants this element permission
+  // to play later sources; muting it would not unlock audible playback.
+  static unlock() {
+    if (this.unlocked || this.priming || (this.active && !this.active.stopped)) return;
+    if (globalThis.navigator?.userActivation?.isActive === false) return;
+    const audio = this.getAudio();
+    const bytes = new Uint8Array(204);
+    const view = new DataView(bytes.buffer);
+    const label = (offset, text) => {
+      for (let i = 0; i < text.length; i++) bytes[offset + i] = text.charCodeAt(i);
+    };
+    label(0, "RIFF"); view.setUint32(4, 196, true);
+    label(8, "WAVEfmt "); view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true); view.setUint16(22, 1, true);
+    view.setUint32(24, 8000, true); view.setUint32(28, 16000, true);
+    view.setUint16(32, 2, true); view.setUint16(34, 16, true);
+    label(36, "data"); view.setUint32(40, 160, true);
+    const url = URL.createObjectURL(new Blob([bytes], { type: "audio/wav" }));
+    audio.src = url;
+    this.priming = true;
+    const release = () => {
+      this.priming = false;
+      // Never pause a narration that attached its source while priming.
+      if (audio.src === url) audio.pause();
+      URL.revokeObjectURL(url);
+    };
+    try {
+      audio.play().then(() => {
+        this.unlocked = true;
+        release();
+      }, release);
+    } catch (_) {
+      release();
+    }
+  }
+
+  constructor(onProgress, onBlocked = () => {}) {
+    // Safari grants playback permission per element. Reuse the element after
+    // a successful user tap so later passages retain that permission.
+    this.audio = McGeeStreamPlayer.getAudio();
+    McGeeStreamPlayer.active = this;
     this.audio.preload = "auto";
     this.onProgress = onProgress;
+    this.onBlocked = onBlocked;
+    this.waitingForGesture = false;
     this.stopped = false;
     this.hasStarted = false;
     this.receivedBytes = 0;
@@ -25,6 +71,8 @@ globalThis.McGeeStreamPlayer = class McGeeStreamPlayer {
     this.listen(this.audio, "playing", () => {
       if (this.stopped || this.hasStarted) return;
       this.hasStarted = true;
+      McGeeStreamPlayer.unlocked = true;
+      this.waitingForGesture = false;
       clearTimeout(this.startTimeout);
       this.resolveStarted(Date.now());
     });
@@ -86,13 +134,41 @@ globalThis.McGeeStreamPlayer = class McGeeStreamPlayer {
       this.ready.catch((error) => this.fail(error.message));
       this.url = URL.createObjectURL(this.media);
       this.audio.src = this.url;
-      this.audio.play().catch((error) => this.fail(error.message));
+      this.requestPlayback();
     }
     return this.started;
   }
 
   checkActive() {
     if (this.stopped) throw new Error("Narration playback was stopped.");
+  }
+
+  requestPlayback() {
+    // Keep this call synchronous: resume() is called from the Play button's
+    // tap, and an awaited operation here would lose Safari's user gesture.
+    const rejected = (error) => {
+      if (this.stopped) return;
+      const message = `${error.name || "Error"}: ${error.message}`;
+      if (error.name === "NotAllowedError") {
+        clearTimeout(this.startTimeout);
+        this.waitingForGesture = true;
+        this.onBlocked(message);
+      } else {
+        this.fail(message);
+      }
+    };
+    try {
+      this.audio.play().catch(rejected);
+    } catch (error) {
+      rejected(error);
+    }
+  }
+
+  resume() {
+    if (this.stopped || !this.waitingForGesture) return;
+    clearTimeout(this.startTimeout);
+    this.startTimeout = setTimeout(() => this.fail("Narration playback did not start."), 20000);
+    this.requestPlayback();
   }
 
   async append(bytes) {
@@ -128,7 +204,7 @@ globalThis.McGeeStreamPlayer = class McGeeStreamPlayer {
       this.url = URL.createObjectURL(new Blob(this.chunks, { type: "audio/mpeg" }));
       this.chunks = [];
       this.audio.src = this.url;
-      this.audio.play().catch((error) => this.fail(error.message));
+      this.requestPlayback();
     }
   }
 
@@ -150,6 +226,7 @@ globalThis.McGeeStreamPlayer = class McGeeStreamPlayer {
   cleanup() {
     if (this.stopped) return;
     this.stopped = true;
+    if (McGeeStreamPlayer.active === this) McGeeStreamPlayer.active = null;
     clearTimeout(this.startTimeout);
     for (const cancel of [...this.pendingWaits]) cancel(new Error("Narration playback ended."));
     for (const remove of this.listeners) remove();
@@ -161,3 +238,17 @@ globalThis.McGeeStreamPlayer = class McGeeStreamPlayer {
     this.chunks = [];
   }
 };
+
+// Capture the existing gesture before Flutter dispatches it through its event
+// queue. Safari requires play() in that original DOM event, not a later task.
+if (typeof document !== "undefined") {
+  const unlock = (event) => {
+    if (!event.isTrusted) return;
+    if (event.type === "keydown" && event.key !== "Enter" && event.key !== " ") return;
+    globalThis.McGeeStreamPlayer.unlock();
+  };
+  const gestureTarget = typeof window !== "undefined" ? window : document;
+  for (const event of ["pointerup", "touchend", "keydown"]) {
+    gestureTarget.addEventListener(event, unlock, { capture: true, passive: true });
+  }
+}

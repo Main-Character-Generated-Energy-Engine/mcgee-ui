@@ -8,11 +8,13 @@ class NarrationErrorCard extends StatefulWidget {
     required this.message,
     required this.report,
     this.onReturnToSelection,
+    this.onPlayNarration,
   });
 
   final String message;
   final String report;
   final VoidCallback? onReturnToSelection;
+  final VoidCallback? onPlayNarration;
 
   @override
   State<NarrationErrorCard> createState() => _NarrationErrorCardState();
@@ -70,6 +72,13 @@ class _NarrationErrorCardState extends State<NarrationErrorCard> {
             Wrap(
               spacing: 8,
               children: [
+                if (widget.onPlayNarration != null)
+                  FilledButton.icon(
+                    key: const ValueKey('play-blocked-narration'),
+                    onPressed: widget.onPlayNarration,
+                    icon: const Icon(Icons.play_arrow),
+                    label: const Text('Play narration'),
+                  ),
                 FilledButton.icon(
                   key: const ValueKey('copy-narration-error'),
                   onPressed: _copy,
