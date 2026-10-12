@@ -4,6 +4,12 @@ Read `README.md` for setup, commands, architecture, and the browser test flow.
 Work from the repository root; the launcher and mock server resolve files
 relative to it.
 
+- Use a mise-activated shell and run commands directly. Run the setup commands
+  in README once per checkout/worktree. Non-interactive automation that lacks
+  shell activation can use `mise exec -- <command>`.
+- Use the host's global Playwright CLI and browser caches; do not install
+  Playwright or browsers into the repository.
+
 - Use `npm run test` for the JavaScript and Flutter test suites.
 - Use `node scripts/web.mjs e2e` for manual, repeatable browser testing. It uses
   `test/fixtures/mock-camera-feed/` and requires no credentials or physical

@@ -1,0 +1,24 @@
+min_version = "2026.10.3"
+
+[tools]
+node = "26.11.1"
+
+# Official SDK archives and published checksums; Dart is bundled with Flutter.
+[tools."http:flutter"]
+version = "3.47.6"
+strip_components = 1
+bin_path = "bin"
+
+[tools."http:flutter".platforms]
+linux-x64 = { url = "https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_3.47.6-stable.tar.xz", checksum = "sha256:f1631b9c2c8b3529323db412b0d1beacf4a748f8783b0d7cf599a8fd5f461675" }
+macos-x64 = { url = "https://storage.googleapis.com/flutter_infra_release/releases/stable/macos/flutter_macos_3.47.6-stable.zip", checksum = "sha256:f1f68c777b2b34153e1631670445efbeb218f42a398be32bba2051476719b0a4" }
+macos-arm64 = { url = "https://storage.googleapis.com/flutter_infra_release/releases/stable/macos/flutter_macos_arm64_3.47.6-stable.zip", checksum = "sha256:a1946d3b6b3de15ce247dc89649df9035ce29e6b4e7ebe91919a25890ea2e79a" }
+windows-x64 = { url = "https://storage.googleapis.com/flutter_infra_release/releases/stable/windows/flutter_windows_3.47.6-stable.zip", checksum = "sha256:a01bb0d26de91bc23c97cd9ccfaad281a612fb8304213fdd5df1119a09404796" }
+
+[tasks.setup]
+description = "Prepare Flutter web"
+run = [
+  "flutter config --enable-web --no-analytics",
+  "flutter precache --web",
+  "flutter pub get",
+]

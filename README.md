@@ -6,56 +6,86 @@ fallback.
 
 ## Run
 
-### Devcontainer (web development)
+### Setup with mise
 
-Install Docker and the VS Code Dev Containers extension. Open this repository
-in VS Code and run **Dev Containers: Reopen in Container**. The container installs
-Flutter 3.47.6 (including Dart), Node.js 24.19.0, and Netlify CLI 27.11.2,
-enables web support, and runs `flutter pub get`. No host Flutter or Node.js
-installation is needed.
-Flutter comes from the official prebuilt Linux SDK archive, verified against
-its SHA-256 checksum. The image uses x64; ARM hosts (including Apple Silicon)
-run it through Docker's emulation.
+Install [mise](https://mise.jdx.dev/getting-started.html) 2026.10.3 or newer
+and the [Flutter host prerequisites](https://docs.flutter.dev/install).
+The toolchain declares Node 26.11.1 and Flutter 3.47.6
+(including Dart). Matching host mise
+installations are reused; missing versions are installed. Flutter archives and
+checksums are configured for Linux x64, macOS x64/ARM64, and Windows x64.
+Android and iOS development need their respective host toolchains.
+Install the [GitHub CLI (`gh`)](https://cli.github.com/) on the host if you use
+GitHub commands or agent workflows that require it; mise does not install it.
+Deploying also needs the Netlify CLI in your global mise config
+(`mise use --global npm:netlify-cli@latest`).
 
-Codex and Claude Code extensions are installed in the container. Their state
-is stored on the host in `~/.agent-state/mcgee-narrator/codex` and
-`~/.agent-state/mcgee-narrator/claude`, mounted at `/home/node/.codex` and
-`/home/node/.claude`. Sessions and file-based sign-ins survive container
-rebuilds. VS Code's server state is persisted in `~/.vscode-server`, with
-workspace state in `~/.vscode-server-workspaces/mcgee-narrator`, following
-aricatadora's devcontainer layout. The workspace-specific directory names use
-the checkout folder's basename. These directories are created automatically
-on the host before the container starts.
+Enable [mise shell activation](https://mise.jdx.dev/shell-setup.html) once in
+your shell's startup file, then open a new terminal:
 
-Git and the OpenSSH client are installed in the image, and the GitHub CLI is
-installed by a Dev Container feature, matching aricatadora. VS Code Dev Containers
-forwards the host's SSH agent and Git credential helper. For SSH remotes, load
-your GitHub key into the host's SSH agent before opening the container. For
-HTTPS remotes, use the forwarded host credentials or authenticate with
-`gh auth login` and run `gh auth setup-git` inside the container.
+| Shell | Startup file | Activation line |
+| --- | --- | --- |
+| Bash | `~/.bashrc` | `eval "$(mise activate bash)"` |
+| Zsh | `~/.zshrc` | `eval "$(mise activate zsh)"` |
+| Fish | `~/.config/fish/config.fish` | `mise activate fish &#124; source` |
+| PowerShell | `$PROFILE` | `(&mise activate pwsh) &#124; Out-String &#124; Invoke-Expression` |
 
-Configure the provider keys below, run `npm run dev` in the container terminal, then open
-`http://localhost:8770` in your host browser. Ports 8770 (app) and 8767
-(speech relay) are forwarded to the same local port numbers; keep both
-ports free on the host.
+Activation automatically updates tool versions and the worktree environment
+when you enter this checkout or another worktree. Use `mise doctor` to verify
+that activation is enabled.
 
-Grant camera access in your host browser. The container uses
-Flutter's `web-server` device instead of launching Chrome inside the container.
-Browser playback, camera access, and the localhost provider endpoints use the
-forwarded ports. Keep the forwards private and access the app through localhost.
+From the repository root in that terminal:
 
-Tests, analysis, and web builds also run in the container terminal. This setup
-targets web development; it does not include Android or iOS toolchains. Change
-the pinned versions in `.devcontainer/Dockerfile` and rebuild the container
-when upgrading. Update the Flutter archive checksum alongside its version.
+```sh
+mise trust
+mise install --locked
+mise run setup
+npm run dev
+```
 
-### Host development
+The app launches Chrome automatically; grant camera access when prompted.
+The app and speech relay bind to `127.0.0.1`; the relay uses port 8767.
+Run npm, Flutter, and browser commands directly.
 
-Alternatively, install Flutter (with Chrome support) and Node.js on the host,
-then run `flutter pub get`. The host launcher opens Chrome for `npm run dev`.
-To serve the app in your own browser instead, set `MCGEE_WEB_DEVICE=web-server`.
-`MCGEE_DEV_HOST` controls the app and relay bind address (default `127.0.0.1`;
-the devcontainer sets `0.0.0.0`).
+To use your own browser at `http://localhost:8770`, add this optional preference
+to the ignored `mise.local.toml`:
+
+```toml
+[env]
+MCGEE_WEB_DEVICE = "web-server"
+```
+
+Browser testing uses your host's global Playwright CLI and browser caches; the
+repository does not pin or install them.
+
+Tool installations are shared across repositories in mise's host data directory.
+The Node pin selects the shared Node installation and its bundled npm; it does
+not install a separate npm per checkout. To use the same version outside this
+repository, run `mise use --global node@26.11.1` once.
+
+`mise.lock` records tool versions and Node/Flutter SDK checksums.
+Existing installations outside mise can be registered with
+`mise link <tool>@<version> /path/to/installation`.
+
+To upgrade, edit the tool pins and Flutter archive URLs/checksums in `mise.toml`,
+then regenerate the lockfile:
+
+```sh
+mise lock --platform linux-x64,macos-x64,macos-arm64,windows-x64
+```
+
+### VS Code
+
+For VS Code opened from the desktop, set `dart.flutterSdkPath` in your VS Code
+user settings to the absolute SDK directory printed by `mise where http:flutter`
+from this checkout. Mise shims alone may not let the Dart/Flutter extension
+discover the SDK. Reload VS Code and confirm the Flutter SDK version appears
+in the status bar. Update this user setting when the Flutter pin changes.
+
+### Agent sessions
+
+Agent sessions are scoped to each worktree directory.
+Sign-in and skills are shared across worktrees.
 
 ### Provider credentials
 
@@ -184,9 +214,9 @@ opening audio begins.
 ## Deploy
 
 The Netlify site is `mcgee-narrator`. Set `FISH_AUDIO_API_KEY` as a Netlify
-server environment variable. The devcontainer includes the Netlify CLI; for
-host development, install it separately. Run `netlify login` in your development
-terminal and complete authentication in your host browser, then run
-`netlify link` for a new checkout and `npm run deploy`. That command
+server environment variable. Install the Netlify CLI in your global mise
+config (`mise use --global npm:netlify-cli@latest`). Run `netlify login` and complete authentication in your
+host browser, then run `netlify link` for a new checkout and
+`npm run deploy`. That command
 runs tests, builds the web app, and deploys the static assets with the speech
 function. A web build embeds the OpenRouter key supplied at build time.

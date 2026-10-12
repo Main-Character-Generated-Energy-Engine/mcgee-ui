@@ -24,6 +24,9 @@ const mode = process.argv[2];
 if (!["dev", "e2e", "build", "deploy", "check"].includes(mode)) {
   throw new Error("Usage: node scripts/web.mjs dev|e2e|build|deploy|check");
 }
+if (mode === "deploy" && spawnSync("netlify", ["--version"], { stdio: "ignore" }).status !== 0) {
+  throw new Error("Install the Netlify CLI globally: mise use --global npm:netlify-cli@latest");
+}
 
 const config = {
   OPENROUTER_API_KEY: mode === "e2e"
