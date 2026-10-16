@@ -1,14 +1,10 @@
 import 'package:mcgee/narration_engine.dart';
-import 'package:mcgee/openrouter.dart';
 
 /// Writes a complete passage before starting browser speech.
 final class DirectNarrationRenderer implements NarrationRenderer {
-  DirectNarrationRenderer({
-    required this.narrator,
-    required this.speech,
-  });
+  DirectNarrationRenderer({required this.narrator, required this.speech});
 
-  final OpenRouterNarrationModel narrator;
+  final NarrationModel narrator;
   final SpeechSynthesizer speech;
 
   @override

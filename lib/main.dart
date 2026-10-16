@@ -24,8 +24,8 @@ import 'narration_diagnostics.dart';
 import 'narration_error_card.dart';
 import 'narrative_memory_store.dart';
 import 'narrator_profile.dart';
-import 'openrouter_key_loader.dart';
-import 'openrouter_runtime.dart';
+import 'openai_key_loader.dart';
+import 'openai_runtime.dart';
 import 'user_profile_store.dart';
 
 Future<void> main() async {
@@ -100,7 +100,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
   StreamSubscription<String>? _audioBlockedSubscription;
   CaptureStore? _captureStore;
   FlutterAudioOutput? _audioOutput;
-  OpenRouterNarrationRuntime? _narrationRuntime;
+  OpenAiNarrationRuntime? _narrationRuntime;
   String? _error;
   String? _audioError;
   NarrationDiagnostics? _audioDiagnostics;
@@ -519,7 +519,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
   }
 
   Future<void> _changeNarrator(
-    OpenRouterNarrationRuntime runtime,
+    OpenAiNarrationRuntime runtime,
     String actor,
     int revision,
   ) async {
@@ -658,13 +658,11 @@ class _CameraCapturePageState extends State<CameraCapturePage>
     _cancelOpeningWait();
     try {
       final apiKey = kIsWeb
-          ? const String.fromEnvironment('OPENROUTER_API_KEY')
-          : widget.ioApiKeyOverride ?? await loadDefaultOpenRouterKey();
-      if (apiKey == null || apiKey.trim().isEmpty) {
+          ? null
+          : widget.ioApiKeyOverride ?? await loadDefaultOpenAiKey();
+      if (!kIsWeb && (apiKey == null || apiKey.trim().isEmpty)) {
         throw StateError(
-          kIsWeb
-              ? 'Web narration requires OPENROUTER_API_KEY at build time.'
-              : 'Native narration requires .secrets/openrouter-key.',
+          'Native narration requires .secrets/openai-key.',
         );
       }
       String? fishAudioCredential;
@@ -676,9 +674,9 @@ class _CameraCapturePageState extends State<CameraCapturePage>
 
       final narratorProfiles = await loadNarratorProfiles();
       final audioOutput = FlutterAudioOutput();
-      late final OpenRouterNarrationRuntime runtime;
+      late final OpenAiNarrationRuntime runtime;
       try {
-        runtime = OpenRouterNarrationRuntime(
+        runtime = OpenAiNarrationRuntime(
           apiKey: apiKey,
           audioOutput: audioOutput,
           characterName: characterName,
@@ -851,7 +849,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
   }
 
   Future<PreparedFilmOpening?> _prepareOpening(
-    OpenRouterNarrationRuntime runtime,
+    OpenAiNarrationRuntime runtime,
   ) async {
     final revision = _actorSelectionGeneration;
     try {
@@ -903,7 +901,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
   }
 
   Future<void> _beginPreparedOpening(
-    OpenRouterNarrationRuntime runtime,
+    OpenAiNarrationRuntime runtime,
     int generation,
   ) async {
     bool ownsSession() =>
@@ -961,6 +959,10 @@ class _CameraCapturePageState extends State<CameraCapturePage>
         return;
       }
       _cancelOpeningWait();
+      if (!ownsSession()) return;
+      // Analyze the first image and prepare live speech under the image-free
+      // opening, including the second before the camera is revealed.
+      _startCaptureLoop(captureImmediately: true);
       await Future<void>.delayed(const Duration(seconds: 1));
     } else {
       if (_filmOpening == null) {
@@ -976,7 +978,6 @@ class _CameraCapturePageState extends State<CameraCapturePage>
     }
     if (!ownsSession()) return;
     _revealCamera();
-    _startCaptureLoop(captureImmediately: true);
   }
 
   void _startOpeningAudioDeadline(int generation) {
@@ -1097,7 +1098,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
   }
 
   Future<void> _speakOpening(
-    OpenRouterNarrationRuntime runtime,
+    OpenAiNarrationRuntime runtime,
     PreparedFilmOpening opening,
   ) async {
     try {
@@ -1197,7 +1198,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
   }
 
   Future<void> _disposeNarrationResources(
-    OpenRouterNarrationRuntime? runtime,
+    OpenAiNarrationRuntime? runtime,
     FlutterAudioOutput? audioOutput,
   ) async {
     await runtime?.close();

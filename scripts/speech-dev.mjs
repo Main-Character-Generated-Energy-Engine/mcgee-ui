@@ -1,12 +1,14 @@
 import { createServer } from "node:http";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import { handleNarration } from "../netlify/functions/narration.mjs";
 import { handleSpeech } from "../netlify/functions/speech.mjs";
 
-export function startSpeechServer({ port = 8767, host = "127.0.0.1", apiKey, fetcher } = {}) {
+export function startSpeechServer({ port = 8767, host = "127.0.0.1", apiKey, openAiApiKey, fetcher } = {}) {
   const server = createServer(async (req, res) => {
     const url = `http://localhost:${port}${req.url}`;
-    if (new URL(url).pathname !== "/api/speech") {
+    const narration = new URL(url).pathname === "/api/narration/responses";
+    if (!narration && new URL(url).pathname !== "/api/speech") {
       res.writeHead(404).end();
       return;
     }
@@ -15,7 +17,7 @@ export function startSpeechServer({ port = 8767, host = "127.0.0.1", apiKey, fet
       res.on("close", () => {
         if (!res.writableFinished) {
           abort.abort();
-          console.info("[MCGEE] Browser disconnected; canceled Fish request.");
+          console.info("[MCGEE] Browser disconnected; canceled provider request.");
         }
       });
       const request = new Request(url, {
@@ -25,7 +27,9 @@ export function startSpeechServer({ port = 8767, host = "127.0.0.1", apiKey, fet
         duplex: "half",
         signal: abort.signal,
       });
-      const response = await handleSpeech(request, { apiKey, fetcher });
+      const response = narration
+        ? await handleNarration(request, { apiKey: openAiApiKey, fetcher })
+        : await handleSpeech(request, { apiKey, fetcher });
       res.writeHead(response.status, Object.fromEntries(response.headers));
       if (response.body) await pipeline(Readable.fromWeb(response.body), res);
       else res.end();

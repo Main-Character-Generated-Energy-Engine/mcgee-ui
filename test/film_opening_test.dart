@@ -23,7 +23,7 @@ void main() {
       expect(opening.director, 'Bastien Valcour de Sève');
       expect(client.body['input'], contains('Create a new opening in French.'));
       expect(client.body['input'], contains('"Ari"'));
-      expect(client.body['model'], 'openai/gpt-5.6-terra');
+      expect(client.body['model'], 'gpt-5.6-terra');
       expect(client.body['reasoning'], {'effort': 'medium'});
       expect(client.body['max_output_tokens'], 1200);
       expect(client.body['store'], isFalse);
@@ -34,8 +34,8 @@ void main() {
   test('every narrator sends its own opener and accepts mode point of view', () async {
     final profiles = await loadNarratorProfiles();
     final examples = <String, String>{
-      'morgan-freeman': 'I remembered Ari searching for the words; his pride had made an apology difficult.',
-      'david-attenborough': 'Nature conserves energy. Ari is one human animal whose next demand tests those reserves.',
+      'morgan-freeman': 'I remembered Ari. He wanted to seem capable, and asking for help had always felt like the hardest part of beginning.',
+      'david-attenborough': 'Meet the marvellous species known as the Ari vulgaris. We will now explore its remarkable features, for it is mating season.',
       'jade': "Ari faces a decision crisis. We're turning now to the live feed.",
     };
     for (final entry in examples.entries) {

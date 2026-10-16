@@ -35,10 +35,7 @@ final class NarrationDiagnostics {
 
   static String redact(String text, {String? credential}) {
     var safe = text;
-    for (final key in [
-      const String.fromEnvironment('OPENROUTER_API_KEY'),
-      credential ?? '',
-    ]) {
+    for (final key in [credential ?? '']) {
       if (key.isNotEmpty) safe = safe.replaceAll(key, '[redacted]');
     }
     safe = safe

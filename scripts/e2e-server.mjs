@@ -2,12 +2,13 @@ import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
 import { Readable } from "node:stream";
 import { resolve } from "node:path";
+import { handleNarration } from "../netlify/functions/narration.mjs";
 import { handleSpeech } from "../netlify/functions/speech.mjs";
 
 const mp3 = readFileSync(resolve("lib/assets/switch.mp3"));
 
 export function startE2EServer({ port = 8767, host = "127.0.0.1", fishDelayMs = 0 } = {}) {
-  const state = { openings: 0, liveRequests: 0, speechRequests: 0, frameSamples: new Set() };
+  const state = { openings: 0, liveRequests: 0, speechRequests: 0, browserAuthorizationHeaders: 0, frameSamples: new Set() };
   const server = createServer(async (req, res) => {
     const url = new URL(req.url, `http://127.0.0.1:${port}`);
     const origin = req.headers.origin;
@@ -21,7 +22,7 @@ export function startE2EServer({ port = 8767, host = "127.0.0.1", fishDelayMs = 
     if (url.pathname === "/__e2e/state") {
       res.writeHead(200, { "Content-Type": "application/json", ...cors }).end(JSON.stringify({
         openings: state.openings, liveRequests: state.liveRequests,
-        speechRequests: state.speechRequests, distinctFrames: state.frameSamples.size,
+        speechRequests: state.speechRequests, browserAuthorizationHeaders: state.browserAuthorizationHeaders, distinctFrames: state.frameSamples.size,
       }));
       return;
     }
@@ -41,7 +42,8 @@ export function startE2EServer({ port = 8767, host = "127.0.0.1", fishDelayMs = 
       Readable.fromWeb(response.body).pipe(res);
       return;
     }
-    if (url.pathname === "/openrouter/responses" && req.method === "POST") {
+    if (url.pathname === "/api/narration/responses" && req.method === "POST") {
+      if (req.headers.authorization) state.browserAuthorizationHeaders++;
       let body;
       try {
         const chunks = [];
@@ -74,8 +76,14 @@ export function startE2EServer({ port = 8767, host = "127.0.0.1", fishDelayMs = 
           text: `${lead} a fresh clue in the frame, while the missing key keeps the little mystery alive.`,
           reason: "", motifs: [], canon_updates: [] };
       }
-      res.writeHead(200, { ...cors, "Content-Type": "application/json" })
-        .end(JSON.stringify({ output_text: JSON.stringify(output) }));
+      const response = await handleNarration(new Request(url, {
+        method: "POST", headers: req.headers, body: JSON.stringify(body),
+      }), {
+        apiKey: "mock-openai-key",
+        fetcher: async () => Response.json({ output_text: JSON.stringify(output) }),
+      });
+      res.writeHead(response.status, Object.fromEntries(response.headers));
+      Readable.fromWeb(response.body).pipe(res);
       return;
     }
     res.writeHead(404, cors).end();

@@ -6,8 +6,8 @@ import 'dart:io';
 import 'package:mcgee/narration_engine.dart';
 import 'package:mcgee/src/core/writer_instructions.dart';
 import 'package:mcgee/src/openai/openai_response_parsing.dart';
-import 'package:mcgee/src/openrouter/openrouter_http_client.dart';
-import 'package:mcgee/src/openrouter/openrouter_narration_model.dart';
+import 'package:mcgee/src/openai/openai_http_client.dart';
+import 'package:mcgee/src/openai/openai_narration_model.dart';
 
 Future<void> main(List<String> args) async {
   final modes = args.where((arg) => !arg.startsWith('--')).toList();
@@ -35,13 +35,13 @@ Future<void> main(List<String> args) async {
       passages > 24) {
     throw ArgumentError('Use a supported scenario and 1 to 24 passages.');
   }
-  final keyFile = File('.secrets/openrouter-key');
+  final keyFile = File('.secrets/openai-key');
   final key =
-      (Platform.environment['OPENROUTER_API_KEY'] ??
+      (Platform.environment['OPENAI_API_KEY'] ??
               (keyFile.existsSync() ? keyFile.readAsStringSync() : ''))
           .trim();
   if (key.isEmpty) {
-    throw StateError('Set OPENROUTER_API_KEY or its local file.');
+    throw StateError('Set OPENAI_API_KEY or its local file.');
   }
   final profiles =
       jsonDecode(File('lib/assets/narrator-profiles.json').readAsStringSync())
@@ -49,7 +49,7 @@ Future<void> main(List<String> args) async {
   final opening =
       jsonDecode(File('lib/assets/film-opening-prompt.json').readAsStringSync())
           as Map<String, dynamic>;
-  final client = OpenRouterHttpClient(apiKey: key);
+  final client = OpenAiHttpClient(apiKey: key);
   final output = File('.dart_tool/narration-eval.json');
   output.parent.createSync(recursive: true);
   final results = <Map<String, Object?>>[];
@@ -125,7 +125,7 @@ Future<void> main(List<String> args) async {
       };
       results.add(result);
       stdout.writeln('$mode opening: ${credits['narration']}');
-      final model = OpenRouterNarrationModel(
+      final model = OpenAiNarrationModel(
         client: client,
         requireSpokenLine: true,
         continuous: true,

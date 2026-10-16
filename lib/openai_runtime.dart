@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
 import 'package:mcgee/narration_engine.dart';
 import 'package:mcgee/fish_audio.dart';
 import 'package:mcgee/openrouter.dart';
+import 'package:mcgee/openai.dart';
 
 import 'capture_store.dart';
 import 'direct_http_speech_synthesizer.dart';
@@ -17,9 +18,9 @@ import 'narrator_profile.dart';
 const liveMaximumObservationAge = Duration(seconds: 20);
 
 /// Composition root for the app's narration engine and provider adapters.
-final class OpenRouterNarrationRuntime {
-  OpenRouterNarrationRuntime._({
-    required OpenRouterHttpClient client,
+final class OpenAiNarrationRuntime {
+  OpenAiNarrationRuntime._({
+    required OpenAiHttpClient client,
     required NarrationEngine engine,
     required _SelectableSpeechSynthesizer speechSynthesizer,
     required NarrationLanguage language,
@@ -34,7 +35,7 @@ final class OpenRouterNarrationRuntime {
        _narratorSelection = narratorSelection,
        _directHttpSpeech = directHttpSpeech;
 
-  factory OpenRouterNarrationRuntime({
+  factory OpenAiNarrationRuntime({
     String? apiKey,
     required AudioOutput audioOutput,
     required String characterName,
@@ -55,13 +56,17 @@ final class OpenRouterNarrationRuntime {
       );
     }
     final key = apiKey?.trim();
-    if (key == null || key.isEmpty || key.contains(RegExp(r'\s'))) {
-      throw const FormatException('The selected OpenRouter key is invalid.');
+    if (!kIsWeb &&
+        (key == null || key.isEmpty || key.contains(RegExp(r'\s')))) {
+      throw const FormatException('The selected OpenAI key is invalid.');
     }
-    const mockEndpoint = String.fromEnvironment('OPENROUTER_ENDPOINT');
-    final client = OpenRouterHttpClient(
-      apiKey: key,
-      baseUri: mockEndpoint.isEmpty ? null : Uri.parse(mockEndpoint),
+    const relayEndpoint = String.fromEnvironment(
+      'NARRATION_ENDPOINT',
+      defaultValue: '/api/narration/',
+    );
+    final client = OpenAiHttpClient(
+      apiKey: kIsWeb ? null : key,
+      baseUri: kIsWeb ? Uri.base.resolve(relayEndpoint) : null,
     );
     final random = Random();
     final directHttpSpeech = kIsWeb
@@ -82,7 +87,7 @@ final class OpenRouterNarrationRuntime {
       fishAudioTransport: fishAudioTransport,
       directHttpSpeech: directHttpSpeech,
     );
-    final narrator = OpenRouterNarrationModel(
+    final narrator = OpenAiNarrationModel(
       client: client,
       requireSpokenLine: true,
       includeCaptures: true,
@@ -92,7 +97,7 @@ final class OpenRouterNarrationRuntime {
       characterName: normalizedCharacterName,
       narratorInstructions: () => selection.profile.liveInstructions,
     );
-    return OpenRouterNarrationRuntime._(
+    return OpenAiNarrationRuntime._(
       client: client,
       engine: NarrationEngine(
         // The narration model sees the latest image directly. A local scene
@@ -131,7 +136,7 @@ final class OpenRouterNarrationRuntime {
     );
   }
 
-  final OpenRouterHttpClient _client;
+  final OpenAiHttpClient _client;
   final NarrationEngine _engine;
   final _SelectableSpeechSynthesizer _speechSynthesizer;
   final NarrationLanguage _language;

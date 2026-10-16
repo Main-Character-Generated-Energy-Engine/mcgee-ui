@@ -20,7 +20,7 @@ abstract interface class StreamingOpenAiApi implements OpenAiApi {
 /// Minimal OpenAI HTTP client for the MVP. It deliberately has no SDK dependency.
 final class OpenAiHttpClient implements StreamingOpenAiApi {
   OpenAiHttpClient({
-    required String apiKey,
+    String? apiKey,
     http.Client? httpClient,
     Uri? baseUri,
     this.providerName = 'OpenAI',
@@ -28,7 +28,7 @@ final class OpenAiHttpClient implements StreamingOpenAiApi {
        _httpClient = httpClient ?? http.Client(),
        _baseUri = baseUri ?? Uri.parse('https://api.openai.com/v1/');
 
-  final String _apiKey;
+  final String? _apiKey;
   final http.Client _httpClient;
   final Uri _baseUri;
   final String providerName;
@@ -52,7 +52,7 @@ final class OpenAiHttpClient implements StreamingOpenAiApi {
     final uri = _baseUri.resolve('responses');
     final request = http.Request('POST', uri)
       ..headers.addAll(<String, String>{
-        'Authorization': 'Bearer $_apiKey',
+        if (_apiKey != null) 'Authorization': 'Bearer $_apiKey',
         'Accept': 'text/event-stream',
         'Content-Type': 'application/json',
       })
@@ -102,7 +102,7 @@ final class OpenAiHttpClient implements StreamingOpenAiApi {
     final response = await _httpClient.post(
       uri,
       headers: <String, String>{
-        'Authorization': 'Bearer $_apiKey',
+        if (_apiKey != null) 'Authorization': 'Bearer $_apiKey',
         'Content-Type': 'application/json',
       },
       body: jsonEncode(body),

@@ -119,8 +119,8 @@ A seated person looking toward the camera is the normal scene. Practical
 fictional intentions and plans may develop while the pose stays steady.
 Separate these narrative interpretations from literal observation. Avoid
 inventing movement, offscreen tasks, supporting people, or physical results.
-Keep Morgan's choices at the scale of taking a comfortable break and deciding
-when to carry on. David chooses varied, scene-supported reproductive strategies;
+Morgan connects visible features of the person and space to the opening's
+recognizable internal struggle, developing a small choice and a clear character arc. David chooses varied, scene-supported reproductive strategies;
 literal description supplies most of his words. After a payoff, his next arc
 needs a materially different tactic rather than refinements of the same action. Give Eve specific responses
 and provisional improvements in the established crisis, reported with vivid

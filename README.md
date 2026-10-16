@@ -1,7 +1,7 @@
 # MCGEE UI
 
-Flutter camera narration app. OpenRouter writes short passages from camera
-frames; Fish Audio `s2.1-pro-free` speaks them. There is no OpenRouter speech
+Flutter camera narration app. OpenAI writes short passages from camera
+frames; Fish Audio `s2.1-pro-free` speaks them. There is no OpenAI speech
 fallback.
 
 ## Run
@@ -17,8 +17,8 @@ checksums are configured for Linux x64, macOS x64/ARM64, and Windows x64.
 Android and iOS development need their respective host toolchains.
 Install the [GitHub CLI (`gh`)](https://cli.github.com/) on the host if you use
 GitHub commands or agent workflows that require it; mise does not install it.
-Deploying also needs the Netlify CLI in your global mise config
-(`mise use --global npm:netlify-cli@latest`).
+Deploying uses the shared Netlify CLI from the host's global mise configuration.
+It installs on first use; no project-local CLI or synchronization is needed.
 
 Enable [mise shell activation](https://mise.jdx.dev/shell-setup.html) once in
 your shell's startup file, then open a new terminal:
@@ -89,31 +89,34 @@ Sign-in and skills are shared across worktrees.
 
 ### Provider credentials
 
-Set `OPENROUTER_API_KEY` and `FISH_AUDIO_API_KEY`, or put each key in its
+Set `OPENAI_API_KEY` and `FISH_AUDIO_API_KEY`, or put each key in its
 ignored local file:
 
 ```text
-.secrets/openrouter-key
+.secrets/openai-key
 .secrets/fishaudio-key
 ```
 
 | Command | Purpose |
 | --- | --- |
-| `npm run dev` | Run the web app and a local Fish speech relay on port 8767. |
+| `npm run dev` | Run the web app and local narration/speech relays on port 8767. |
 | `node scripts/web.mjs check` | Check local credentials without printing them. |
 | `npm run build:web` | Build release assets in `build/web`. |
 | `npm run test` | Run the JavaScript and Flutter test suites. |
 | `flutter test` | Run Flutter tests. |
 | `flutter analyze` | Check Dart code. |
 
-The web build calls OpenRouter directly; **its key is visible to visitors**.
+The web build calls `/api/narration/responses`; the server adds the OpenAI key.
+No provider keys are embedded in browser assets. `netlify/functions/narration.mjs`
+and the local relay use the same Responses handler, with a fixed model and token
+limit. OpenAI handles text and camera vision with `gpt-5.6-terra`.
 Fish requests go through `netlify/functions/speech.mjs` in production and
 `scripts/speech-dev.mjs` locally. Fish's HTTP TTS endpoint does not accept our
 browser CORS preflight, and its TTS WebSocket requires an authorization header
 that browser WebSockets cannot set. The Fish key stays on the server. The
-speech relay currently has no user sign-in; secure and meter it before opening
-the site to others. Native builds read the local keys at runtime and use Fish
-WebSocket directly.
+relays currently have no user sign-in; secure and meter them before opening
+the site to others. Netlify applies a per-IP request rate limit. Native builds read the local keys
+at runtime and use Fish WebSocket directly.
 
 ## Manual browser end-to-end test
 
@@ -122,7 +125,7 @@ For a manual browser check without credentials or a physical camera, run
 Enter a name and press Enter, then press Enter on the
 camera consent screen. The app cycles through
 `test/fixtures/mock-camera-feed/1.jpg` to `4.jpg` every two seconds. Local mock
-OpenRouter and Fish responses exercise
+OpenAI and Fish responses exercise
 the opening, live narration, speech request, and browser playback paths. Check
 `http://127.0.0.1:8767/__e2e/state` for request counts and `distinctFrames`;
 the latter should increase as live narration uses different camera images.
@@ -133,7 +136,7 @@ five-second opening warning and late audio recovery.
 ## Narration quality evaluation
 
 Run `dart run scripts/eval_narration.dart` from the repository root with the
-local OpenRouter key configured as above. This uses the real text provider
+local OpenAI key configured as above. This uses the real text provider
 and incurs provider usage; it does not request speech. Optional arguments
 `morgan-freeman`, `david-attenborough`, or `jade` select a single narrator.
 
@@ -194,8 +197,8 @@ audio, title fade, playback delay, and any failed stage.
 | Path | Role |
 | --- | --- |
 | `lib/main.dart` | App UI, camera lifecycle, and mock camera switch. |
-| `lib/openrouter_runtime.dart` | Wires the narration engine and providers. |
-| `lib/src/` | Narration engine, OpenRouter, and native Fish adapters. |
+| `lib/openai_runtime.dart` | Wires the narration engine and providers. |
+| `lib/src/` | Narration engine, OpenAI, and native Fish adapters. |
 | `lib/direct_narration_renderer.dart` | Sends each complete web passage to speech. |
 | `lib/direct_http_speech_synthesizer.dart` | Receives streamed HTTP speech in the browser. |
 | `netlify/functions/speech.mjs` | Authenticates to Fish and relays the audio stream. |
@@ -208,15 +211,19 @@ The three voices use separate instructions in
 only scene and story context. The opening prompt is
 `lib/assets/film-opening-prompt.json`. Name, language, and spoken story memory
 are stored locally. Opening generation starts during setup, while camera
-permission is pending. The camera view and capture loop start one second after
-opening audio begins.
+permission is pending. The capture loop starts as soon as opening audio begins, preparing the first
+image-based passage underneath the opening. The camera view appears one second
+later. Openings use no image: Morgan recalls the protagonist and a recognizable
+internal struggle; David introduces the marvellous “the {name} vulgaris” species
+and mating season. Morgan then connects visible character and setting details
+to that struggle and develops a small character arc.
 
 ## Deploy
 
-The Netlify site is `mcgee-narrator`. Set `FISH_AUDIO_API_KEY` as a Netlify
-server environment variable. Install the Netlify CLI in your global mise
-config (`mise use --global npm:netlify-cli@latest`). Run `netlify login` and complete authentication in your
+The Netlify site is `mcgee-narrator`. Set `OPENAI_API_KEY` and
+`FISH_AUDIO_API_KEY` as Netlify server environment variables. Run `netlify login` and complete authentication in your
 host browser, then run `netlify link` for a new checkout and
 `npm run deploy`. That command
 runs tests, builds the web app, and deploys the static assets with the speech
-function. A web build embeds the OpenRouter key supplied at build time.
+and narration functions. Web builds require no provider credentials. The launcher does not upload local
+secrets; configure both keys in Netlify before deploying.

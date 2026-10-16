@@ -37,6 +37,32 @@ void main() {
     expect(transport.lastBody?['stream'], isTrue);
   });
 
+  test('relay requests omit authorization for JSON and SSE', () async {
+    final transport = _FakeStreamingHttpClient(
+      chunks: ['{"output_text":"hello"}'],
+    );
+    final client = OpenAiHttpClient(
+      httpClient: transport,
+      baseUri: Uri.parse('https://example.test/api/narration/'),
+    );
+    expect(await client.createResponse({'input': 'hello'}), {
+      'output_text': 'hello',
+    });
+    expect(transport.lastRequest?.url.path, '/api/narration/responses');
+    expect(
+      transport.lastRequest?.headers.containsKey('Authorization'),
+      isFalse,
+    );
+    transport.chunks.clear();
+    transport.chunks.add('data: [DONE]\n\n');
+    await client.createResponseStream({'input': 'hello'}).drain<void>();
+    expect(
+      transport.lastRequest?.headers.containsKey('Authorization'),
+      isFalse,
+    );
+    client.close();
+  });
+
   test('surfaces an HTTP error before an SSE stream starts', () async {
     final client = OpenAiHttpClient(
       apiKey: 'test-key',
