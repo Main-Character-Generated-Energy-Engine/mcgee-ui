@@ -55,8 +55,10 @@ to the ignored `mise.local.toml`:
 MCGEE_WEB_DEVICE = "web-server"
 ```
 
-Browser testing uses your host's global Playwright CLI and browser caches; the
-repository does not pin or install them.
+Browser testing uses the host's global Playwright CLI and shared mise-managed
+Chrome. The host sets `PLAYWRIGHT_MCP_EXECUTABLE_PATH` for Playwright and
+`CHROME_EXECUTABLE` for Flutter, so both use the same browser installation.
+The repository does not download browsers.
 
 Tool installations are shared across repositories in mise's host data directory.
 The Node pin selects the shared Node installation and its bundled npm; it does
